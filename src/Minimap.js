@@ -6,7 +6,7 @@ const ZONE_COLORS = ['#1A0F05', '#3D250F', '#7A4F20', '#B07A3A', '#D4A860'];
 export class Minimap {
   constructor(config) {
     this.config = config;
-    this._fullMap = false;
+    this._fullMap = true;
   }
 
   /** Toggle between nearby-range view and full-map view. */
@@ -15,41 +15,61 @@ export class Minimap {
   }
 
   draw(ctx, gameState, myStoneId, camera, canvasW, canvasH) {
-    const { MAP_WIDTH, MAP_HEIGHT, MINIMAP_VIEW_RANGE } = this.config;
+    const { MAP_WIDTH, MAP_HEIGHT } = this.config;
     const myStone = gameState.stones.find(s => s.id === myStoneId && s.alive);
     if (!myStone) return;
-    const viewRange = this._fullMap ? Infinity : MINIMAP_VIEW_RANGE;
 
     const ox = canvasW - W - MARGIN;
     const oy = MARGIN;
 
-    ctx.save();
+    // World extent shown by the minimap
+    const vpW = camera.viewportW / camera.zoom;
+    const vpH = camera.viewportH / camera.zoom;
+    const shownW = this._fullMap ? MAP_WIDTH  : vpW * 2;
+    const shownH = this._fullMap ? MAP_HEIGHT : vpH * 2;
+    const viewCX   = this._fullMap ? MAP_WIDTH  * 0.5 : myStone.x;
+    const viewCY   = this._fullMap ? MAP_HEIGHT * 0.5 : myStone.y;
+    const viewLeft = viewCX - shownW * 0.5;
+    const viewTop  = viewCY - shownH * 0.5;
+    const viewRight  = viewLeft + shownW;
+    const viewBottom = viewTop  + shownH;
 
-    // Clip to minimap rect
+    const toMini = (wx, wy) => ({
+      mx: ox + (wx - viewLeft) / shownW * W,
+      my: oy + (wy - viewTop)  / shownH * H,
+    });
+
+    ctx.save();
     ctx.beginPath();
     ctx.rect(ox, oy, W, H);
     ctx.clip();
 
-    // Zone bands
-    const bandH = H / ZONE_COLORS.length;
+    // Out-of-map base fill
+    ctx.fillStyle = '#0a0808';
+    ctx.fillRect(ox, oy, W, H);
+
+    // Zone bands — only the portion overlapping the view
+    const zoneH = MAP_HEIGHT / ZONE_COLORS.length;
     for (let i = 0; i < ZONE_COLORS.length; i++) {
+      const zWorldTop    = i * zoneH;
+      const zWorldBottom = (i + 1) * zoneH;
+      const overlapTop    = Math.max(zWorldTop,    viewTop);
+      const overlapBottom = Math.min(zWorldBottom, viewBottom);
+      if (overlapBottom <= overlapTop) continue;
+      const { my: sTop    } = toMini(0, overlapTop);
+      const { my: sBottom } = toMini(0, overlapBottom);
       ctx.fillStyle = ZONE_COLORS[i];
-      ctx.fillRect(ox, oy + i * bandH, W, bandH);
+      ctx.fillRect(ox, sTop, W, sBottom - sTop);
     }
 
     // Darken overlay
     ctx.fillStyle = 'rgba(0,0,0,0.38)';
     ctx.fillRect(ox, oy, W, H);
 
-    const toMini = (wx, wy) => ({
-      mx: ox + (wx / MAP_WIDTH) * W,
-      my: oy + (wy / MAP_HEIGHT) * H,
-    });
-
     // Gears — gray triangles
     ctx.fillStyle = '#999';
     for (const gear of gameState.gears) {
-      if (Math.hypot(gear.x - myStone.x, gear.y - myStone.y) > viewRange) continue;
+      if (gear.x < viewLeft || gear.x > viewRight || gear.y < viewTop || gear.y > viewBottom) continue;
       const { mx, my } = toMini(gear.x, gear.y);
       ctx.beginPath();
       ctx.moveTo(mx, my - 3);
@@ -62,7 +82,7 @@ export class Minimap {
     // Other stones
     for (const stone of gameState.stones) {
       if (!stone.alive || stone.id === myStoneId) continue;
-      if (Math.hypot(stone.x - myStone.x, stone.y - myStone.y) > viewRange) continue;
+      if (stone.x < viewLeft || stone.x > viewRight || stone.y < viewTop || stone.y > viewBottom) continue;
       const { mx, my } = toMini(stone.x, stone.y);
       ctx.fillStyle = stone.color;
       ctx.beginPath();
@@ -70,7 +90,7 @@ export class Minimap {
       ctx.fill();
     }
 
-    // Own stone — white, 4px
+    // Own stone — white, 4px (center of minimap in local view)
     {
       const { mx, my } = toMini(myStone.x, myStone.y);
       ctx.fillStyle = '#ffffff';
@@ -79,14 +99,10 @@ export class Minimap {
       ctx.fill();
     }
 
-    // Viewport rectangle — divide by zoom to get the visible world extent
-    const worldW = camera.viewportW / camera.zoom;
-    const worldH = camera.viewportH / camera.zoom;
-    const vpLeft = camera.x - worldW * 0.5;
-    const vpTop  = camera.y - worldH * 0.5;
-    const { mx: rx, my: ry } = toMini(vpLeft, vpTop);
-    const rw = (worldW / MAP_WIDTH) * W;
-    const rh = (worldH / MAP_HEIGHT) * H;
+    // Viewport rectangle
+    const { mx: rx, my: ry } = toMini(camera.x - vpW * 0.5, camera.y - vpH * 0.5);
+    const rw = (vpW / shownW) * W;
+    const rh = (vpH / shownH) * H;
     ctx.strokeStyle = 'rgba(255,255,255,0.55)';
     ctx.lineWidth = 1;
     ctx.strokeRect(rx, ry, rw, rh);
