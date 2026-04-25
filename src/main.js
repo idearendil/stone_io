@@ -24,7 +24,7 @@ const deadRankEl     = document.getElementById('dead-rank');
 const deadCountdownEl = document.getElementById('dead-countdown');
 
 const BOT_NAMES = [];
-for(let i=0; i<100; i++) BOT_NAMES.push(String.fromCharCode(65 + i));
+for(let i=0; i<100; i++) BOT_NAMES.push(i.toString());
 
 let myId = null;
 let lastTs = null;
@@ -89,6 +89,7 @@ function loop(ts) {
   lastTs = ts;
 
   const gameState = engine.step(delta);
+  gameState._deltaMS = delta;
   renderer.render(gameState, myId, ts);
 
   // Dead overlay logic
