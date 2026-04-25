@@ -43,6 +43,7 @@ function startGame() {
   const nickname = nicknameInput.value.trim() || 'You';
   myId = engine.addPlayer('p1', nickname);
   for (const name of BOT_NAMES) engine.addBot(name);
+  for (let i=0; i<CONFIG.FRAGMENT_LIFETIME / CONFIG.SPAWN_INTERVAL * (CONFIG.MAX_FRAGMENT_SPAWN + CONFIG.MIN_FRAGMENT_SPAWN) / 2; i++) engine._spawnInitialFragments();
   lobbyOverlay.style.display = 'none';
   requestAnimationFrame(loop);
 }

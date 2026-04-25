@@ -3,7 +3,6 @@ const SLIDER_DEFS = [
   { key: 'MASS_ACCEL_FACTOR', min: 0,     max: 0.001, step: 0.00005 },
   { key: 'RESTITUTION',       min: 0,     max: 1,     step: 0.05   },
   { key: 'FRICTION',          min: 0.9,   max: 1.0,   step: 0.001  },
-  { key: 'FRAGMENT_COUNT',    min: 4,     max: 30,    step: 1      },
 ];
 
 export class ConfigPanel {

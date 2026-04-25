@@ -317,7 +317,8 @@ export class Renderer {
     ctx.shadowBlur = 4;
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
     const speed = Math.hypot(myStone.vx, myStone.vy).toFixed(2);
-    ctx.fillText(`r: ${myStone.radius.toFixed(1)}   spd: ${speed}   rank: ${rank} / ${aliveStones.length}`, 12, 12);
+    const frg_cnt = gameState.fragments.length;
+    ctx.fillText(`r: ${myStone.radius.toFixed(1)}   spd: ${speed}   rank: ${rank} / ${aliveStones.length}   fragments: ${frg_cnt}`, 12, 12);
     ctx.restore();
   }
 

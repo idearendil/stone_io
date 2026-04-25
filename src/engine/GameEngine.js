@@ -190,7 +190,7 @@ export class GameEngine {
 
     // Natural fragment spawn
     this._spawnTimer += deltaMs;
-    if (this._spawnTimer >= this.config.SPAWN_INTERVAL) {
+    while (this._spawnTimer >= this.config.SPAWN_INTERVAL) {
       this._spawnTimer -= this.config.SPAWN_INTERVAL;
       this._spawnNaturalFragments();
     }
@@ -245,7 +245,7 @@ export class GameEngine {
 
       this.fragments.push(new Fragment(fx, fy, radius,
         Math.cos(angle) * speed, Math.sin(angle) * speed,
-        30000, stone.color,
+        this.config.FRAGMENT_LIFETIME, stone.color,
       ));
     }
   }
@@ -265,9 +265,9 @@ export class GameEngine {
   }
 
   _spawnNaturalFragments() {
-    const { MAP_WIDTH, MAP_HEIGHT, ZONES } = this.config;
+    const { MAP_WIDTH, MAP_HEIGHT, ZONES, FRAGMENT_LIFETIME, MAX_FRAGMENT_SPAWN, MIN_FRAGMENT_SPAWN } = this.config;
     const zoneH = MAP_HEIGHT / ZONES.length;
-    const count = 3 + Math.floor(Math.random() * 4); // 3–6 per interval
+    const count = MIN_FRAGMENT_SPAWN + Math.floor(Math.random() * (MAX_FRAGMENT_SPAWN - MIN_FRAGMENT_SPAWN + 1)); // 3–6 per interval
     for (let i = 0; i < count; i++) {
       let x, y, radius;
       let attempts = 0;
@@ -285,7 +285,29 @@ export class GameEngine {
         attempts < 10 &&
         this.gears.some(g => Math.hypot(x - g.x, y - g.y) < g.collisionRadius + radius + 20)
       );
-      if (attempts < 10) this.fragments.push(new Fragment(x, y, radius, 0, 0, 30000));
+      if (attempts < 10) this.fragments.push(new Fragment(x, y, radius, 0, 0, FRAGMENT_LIFETIME));
     }
+  }
+
+  _spawnInitialFragments() {
+    const { MAP_WIDTH, MAP_HEIGHT, ZONES, FRAGMENT_LIFETIME } = this.config;
+    const zoneH = MAP_HEIGHT / ZONES.length;
+    let x, y, radius;
+    let attempts = 0;
+    do {
+      x = 50 + Math.random() * (MAP_WIDTH - 100);
+      y = 50 + Math.random() * (MAP_HEIGHT - 100);
+      const zone = Math.min(ZONES.length - 1, Math.floor(y / zoneH));
+      radius = zone <= 1
+        ? 8  + Math.random() * 4   // upper (hard) zones: 8–12 — big reward for risk
+        : zone >= 3
+          ? 3  + Math.random() * 3   // lower (safe) zones: 3–6
+          : 5  + Math.random() * 3;  // middle zone: 5–8
+      attempts++;
+    } while (
+      attempts < 10 &&
+      this.gears.some(g => Math.hypot(x - g.x, y - g.y) < g.collisionRadius + radius + 20)
+    );
+    if (attempts < 10) this.fragments.push(new Fragment(x, y, radius, 0, 0, Math.random() * FRAGMENT_LIFETIME));
   }
 }
