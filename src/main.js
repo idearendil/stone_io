@@ -23,11 +23,8 @@ const deadRadiusEl   = document.getElementById('dead-radius');
 const deadRankEl     = document.getElementById('dead-rank');
 const deadCountdownEl = document.getElementById('dead-countdown');
 
-const BOT_NAMES = [
-  'Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta', 'Eta', 'Theta',
-  'Iota', 'Kappa', 'Lambda', 'Mu', 'Nu', 'Xi', 'Omicron', 'Pi', 'Rho',
-  'Sigma', 'Tau', 'Upsilon', 'Phi', 'Chi', 'Psi', 'Omega'
-];
+const BOT_NAMES = [];
+for(let i=0; i<100; i++) BOT_NAMES.push(String.fromCharCode(65 + i));
 
 let myId = null;
 let lastTs = null;

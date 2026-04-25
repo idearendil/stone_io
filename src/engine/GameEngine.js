@@ -25,7 +25,61 @@ export class GameEngine {
     this._spawnTimer = 0;
     this._events = [];
     this.gears = new MapGenerator(this._mapSeed).generateGears(this.config);
+    this._initFragGrid();
   }
+
+  // ---------------------------------------------------------------------------
+  // Fragment spatial grid
+  // Cell size must exceed max(stone.radius + max_fragment_drift) for correctness.
+  // Death fragments drift at most ~30 world units before stopping (friction 0.9/frame).
+  // ---------------------------------------------------------------------------
+
+  _initFragGrid() {
+    const cs = this.config.FRAG_CELL_SIZE;
+    this._cellSize = cs;
+    this._gridCols = Math.ceil(this.config.MAP_WIDTH  / cs);
+    this._gridRows = Math.ceil(this.config.MAP_HEIGHT / cs);
+    // _fragCells[row][col] = Fragment[]  (indexed by spawn position, never updated)
+    this._fragCells = Array.from({ length: this._gridRows }, () =>
+      Array.from({ length: this._gridCols }, () => [])
+    );
+  }
+
+  _addFragment(frag) {
+    const cs = this._cellSize;
+    frag._gridRow = Math.min(this._gridRows - 1, Math.max(0, Math.floor(frag.y / cs)));
+    frag._gridCol = Math.min(this._gridCols - 1, Math.max(0, Math.floor(frag.x / cs)));
+    this.fragments.push(frag);
+    this._fragCells[frag._gridRow][frag._gridCol].push(frag);
+  }
+
+  _removeFragFromGrid(frag) {
+    const cell = this._fragCells[frag._gridRow][frag._gridCol];
+    const idx = cell.indexOf(frag);
+    if (idx !== -1) cell.splice(idx, 1);
+  }
+
+  /** Returns all fragments in the 3×3 cell neighbourhood around world position (wx, wy). */
+  getFragmentsNear(wx, wy) {
+    const cs = this._cellSize;
+    const col = Math.min(this._gridCols - 1, Math.max(0, Math.floor(wx / cs)));
+    const row = Math.min(this._gridRows - 1, Math.max(0, Math.floor(wy / cs)));
+    const result = [];
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const r = row + dr, c = col + dc;
+        if (r >= 0 && r < this._gridRows && c >= 0 && c < this._gridCols) {
+          const cell = this._fragCells[r][c];
+          for (let i = 0; i < cell.length; i++) result.push(cell[i]);
+        }
+      }
+    }
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Player / bot management
+  // ---------------------------------------------------------------------------
 
   /** Returns the stoneId assigned to this player. */
   addPlayer(id, nickname) {
@@ -83,6 +137,10 @@ export class GameEngine {
     }
     return stats;
   }
+
+  // ---------------------------------------------------------------------------
+  // Main simulation step
+  // ---------------------------------------------------------------------------
 
   /** Advance simulation by deltaMs milliseconds. Returns a GameState snapshot. */
   step(deltaMs) {
@@ -165,28 +223,41 @@ export class GameEngine {
       }
     }
 
-    // Fragment physics + expiry
-    for (const f of this.fragments) {
-      f.vx *= this.config.FRICTION;
-      f.vy *= this.config.FRICTION;
-      f.x += f.vx;
-      f.y += f.vy;
-      f.ttl -= deltaMs;
+    // Fragment physics + expiry (iterate flat list; remove expired from grid)
+    {
+      const live = [];
+      for (const f of this.fragments) {
+        f.vx *= this.config.FRICTION;
+        f.vy *= this.config.FRICTION;
+        f.x += f.vx;
+        f.y += f.vy;
+        f.ttl -= deltaMs;
+        if (f.ttl > 0) {
+          live.push(f);
+        } else {
+          this._removeFragFromGrid(f);
+        }
+      }
+      this.fragments = live;
     }
-    this.fragments = this.fragments.filter(f => f.ttl > 0);
 
-    // Fragment absorption
+    // Fragment absorption — only check 3×3 grid neighbourhood per stone
     const aliveNow = [...this.stones.values()].filter(s => s.alive);
-    this.fragments = this.fragments.filter(frag => {
-      for (const stone of aliveNow) {
+    const absorbed = new Set();
+    for (const stone of aliveNow) {
+      for (const frag of this.getFragmentsNear(stone.x, stone.y)) {
+        if (absorbed.has(frag)) continue;
         if (Math.hypot(stone.x - frag.x, stone.y - frag.y) < stone.radius + frag.radius) {
           stone.absorb(frag.area);
           this._events.push({ type: 'absorb', x: frag.x, y: frag.y });
-          return false;
+          absorbed.add(frag);
         }
       }
-      return true;
-    });
+    }
+    if (absorbed.size > 0) {
+      this.fragments = this.fragments.filter(f => !absorbed.has(f));
+      for (const f of absorbed) this._removeFragFromGrid(f);
+    }
 
     // Natural fragment spawn
     this._spawnTimer += deltaMs;
@@ -219,6 +290,10 @@ export class GameEngine {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Internal helpers
+  // ---------------------------------------------------------------------------
+
   _killStone(stone) {
     stone.alive = false;
     stone.respawnAt = this._totalTime + 2000;
@@ -227,7 +302,6 @@ export class GameEngine {
     const target = Math.ceil(stone.radius);
     let attempts = 0;
     while (fragment_spawned <= stone.radius) {
-      // Guard: if stone died deep inside a gear every direction may be blocked
       if (++attempts > target * 20) break;
 
       const angle = Math.random() * 2 * Math.PI;
@@ -236,14 +310,15 @@ export class GameEngine {
       const fx = stone.x + Math.cos(angle) * stone.radius;
       const fy = stone.y + Math.sin(angle) * stone.radius;
 
-      // Skip fragments that land inside or within 20px of any gear's collision edge
       const tooClose = this.gears.some(
         gear => Math.hypot(fx - gear.x, fy - gear.y) < gear.collisionRadius + radius + 20
       );
       if (tooClose) continue;
       fragment_spawned++;
 
-      this.fragments.push(new Fragment(fx, fy, radius,
+      // Grid cell is assigned from spawn position and never updated.
+      // Death fragments drift at most ~30 world units (speed 1-3, friction 0.9/frame).
+      this._addFragment(new Fragment(fx, fy, radius,
         Math.cos(angle) * speed, Math.sin(angle) * speed,
         this.config.FRAGMENT_LIFETIME, stone.color,
       ));
@@ -265,9 +340,11 @@ export class GameEngine {
   }
 
   _spawnNaturalFragments() {
-    const { MAP_WIDTH, MAP_HEIGHT, ZONES, FRAGMENT_LIFETIME, MAX_FRAGMENT_SPAWN, MIN_FRAGMENT_SPAWN } = this.config;
+    const { MAP_WIDTH, MAP_HEIGHT, ZONES,
+            MIN_FRAGMENT_SPAWN, MAX_FRAGMENT_SPAWN, FRAGMENT_LIFETIME } = this.config;
     const zoneH = MAP_HEIGHT / ZONES.length;
-    const count = MIN_FRAGMENT_SPAWN + Math.floor(Math.random() * (MAX_FRAGMENT_SPAWN - MIN_FRAGMENT_SPAWN + 1)); // 3–6 per interval
+    const count = MIN_FRAGMENT_SPAWN +
+      Math.floor(Math.random() * (MAX_FRAGMENT_SPAWN - MIN_FRAGMENT_SPAWN + 1));
     for (let i = 0; i < count; i++) {
       let x, y, radius;
       let attempts = 0;
@@ -285,7 +362,8 @@ export class GameEngine {
         attempts < 10 &&
         this.gears.some(g => Math.hypot(x - g.x, y - g.y) < g.collisionRadius + radius + 20)
       );
-      if (attempts < 10) this.fragments.push(new Fragment(x, y, radius, 0, 0, FRAGMENT_LIFETIME));
+      // Natural fragments have vx=vy=0, so spawn position = forever position
+      if (attempts < 10) this._addFragment(new Fragment(x, y, radius, 0, 0, FRAGMENT_LIFETIME));
     }
   }
 
@@ -308,6 +386,6 @@ export class GameEngine {
       attempts < 10 &&
       this.gears.some(g => Math.hypot(x - g.x, y - g.y) < g.collisionRadius + radius + 20)
     );
-    if (attempts < 10) this.fragments.push(new Fragment(x, y, radius, 0, 0, Math.random() * FRAGMENT_LIFETIME));
+    if (attempts < 10) this._addFragment(new Fragment(x, y, radius, 0, 0, Math.random() * FRAGMENT_LIFETIME));
   }
 }

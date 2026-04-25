@@ -14,6 +14,7 @@ export const CONFIG = {
   MAP_HEIGHT: 80000,
   STONE_INIT_RADIUS: 16,
   MINIMAP_VIEW_RANGE: 1200,
+  FRAG_CELL_SIZE: 500,
   ZONES: [
     { gearRadiusMin: 320, gearRadiusMax: 640, gearSpacing: 6400, rpm: 30 },
     { gearRadiusMin: 160,  gearRadiusMax: 320, gearSpacing: 3200, rpm: 40 },

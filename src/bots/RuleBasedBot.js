@@ -14,13 +14,13 @@ export class RuleBasedBot {
     const stone = state.stones.find(s => s.id === this.stoneId);
     if (!stone || !stone.alive) return;
 
-    const angle = this._decide(deltaMs, stone, state);
+    const angle = this._decide(deltaMs, stone, state, engine);
     const mouseX = HALF_VP + Math.cos(angle) * PUSH_DIST;
     const mouseY = HALF_VP + Math.sin(angle) * PUSH_DIST;
     engine.setInput(this.stoneId, mouseX, mouseY, VIEWPORT_SIZE, VIEWPORT_SIZE);
   }
 
-  _decide(deltaMs, stone, state) {
+  _decide(deltaMs, stone, state, engine) {
     const { x, y, radius } = stone;
 
     // Priority 1: FLEE_GEAR — flee if within 80px of gear collision edge
@@ -65,10 +65,10 @@ export class RuleBasedBot {
       return Math.atan2(smallTarget.y - y, smallTarget.x - x);
     }
 
-    // Priority 4: CHASE_FRAGMENT — best score fragment within 600px
+    // Priority 4: CHASE_FRAGMENT — best score fragment in 3×3 nearby grid cells
     let bestFrag = null;
     let bestScore = -Infinity;
-    for (const frag of state.fragments) {
+    for (const frag of engine.getFragmentsNear(x, y)) {
       const d = Math.hypot(frag.x - x, frag.y - y);
       if (d > 600) continue;
       const score = frag.radius / (d + 1);
