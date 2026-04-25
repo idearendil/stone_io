@@ -2,8 +2,8 @@
  * accel = BASE_ACCEL / (1 + MASS_ACCEL_FACTOR * area)
  * soft reduction so large stones feel heavier but still controllable
  */
-export function applyAcceleration(stone, targetAngle, config) {
-  const accel = config.BASE_ACCEL / (1 + config.MASS_ACCEL_FACTOR * stone.radius) * (stone.last_impulse - stone.groggyUntil) / stone.last_impulse;
+export function applyAcceleration(stone, targetAngle, dist, config) {
+  const accel = config.BASE_ACCEL * (1 + config.MASS_ACCEL_FACTOR * stone.radius) * (stone.last_impulse - stone.groggyUntil) / stone.last_impulse * Math.min(1, (dist - config.DEAD_ZONE_RADIUS) / config.MAX_ACCEL_RADIUS);
   stone.vx += Math.cos(targetAngle) * accel;
   stone.vy += Math.sin(targetAngle) * accel;
 }

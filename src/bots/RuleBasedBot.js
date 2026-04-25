@@ -1,6 +1,6 @@
 const VIEWPORT_SIZE = 200;
 const HALF_VP = VIEWPORT_SIZE / 2;
-const PUSH_DIST = 80; // > DEAD_ZONE_RADIUS (40) so input always registers
+const PUSH_DIST = 120; // > DEAD_ZONE_RADIUS (40) so input always registers
 
 export class RuleBasedBot {
   constructor(stoneId) {

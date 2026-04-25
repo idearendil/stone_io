@@ -171,10 +171,11 @@ export class GameEngine {
       if (inp) {
         const dx = inp.mouseX - inp.viewportW / 2;
         const dy = inp.mouseY - inp.viewportH / 2;
+        const dist = Math.hypot(dx, dy);
         if (stone.groggyUntil > 0) stone.groggyUntil -= this.config.GROGGY_COUNTDOWN;
         if (stone.groggyUntil <= 0)  stone.groggyUntil = 0;
-        if (Math.hypot(dx, dy) >= this.config.DEAD_ZONE_RADIUS) {
-          Physics.applyAcceleration(stone, Math.atan2(dy, dx), this.config);
+        if (dist >= this.config.DEAD_ZONE_RADIUS) {
+          Physics.applyAcceleration(stone, Math.atan2(dy, dx), dist, this.config);
         }
       }
       stone.vx *= (this.config.FRICTION + Math.abs(stone.vx) / 450);
