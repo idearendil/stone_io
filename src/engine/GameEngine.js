@@ -1,0 +1,291 @@
+import { Stone } from './entities/Stone.js';
+import { Fragment } from './entities/Fragment.js';
+import { MapGenerator } from './MapGenerator.js';
+import * as Physics from './Physics.js';
+import { RuleBasedBot } from '../bots/RuleBasedBot.js';
+
+const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#e91e63'];
+
+export class GameEngine {
+  constructor(config) {
+    this.config = config;
+    this._idCounter = 0;
+    this._mapSeed = 12345;
+    this._bots = new Map();
+    this._lastState = null;
+    this.reset();
+  }
+
+  reset() {
+    this.tick = 0;
+    this._totalTime = 0;
+    this.stones = new Map();
+    this.fragments = [];
+    this._inputs = new Map();
+    this._spawnTimer = 0;
+    this._events = [];
+    this.gears = new MapGenerator(this._mapSeed).generateGears(this.config);
+  }
+
+  /** Returns the stoneId assigned to this player. */
+  addPlayer(id, nickname) {
+    const stoneId = ++this._idCounter;
+    const { MAP_WIDTH, MAP_HEIGHT, ZONES, STONE_INIT_RADIUS } = this.config;
+    const zoneHeight = MAP_HEIGHT / ZONES.length;
+    const x = MAP_WIDTH * 0.1 + (stoneId % 9) * MAP_WIDTH * 0.09;
+    const y = MAP_HEIGHT - zoneHeight * 0.25;
+    this.stones.set(stoneId, new Stone(stoneId, x, y, STONE_INIT_RADIUS, COLORS[stoneId % COLORS.length], nickname));
+    return stoneId;
+  }
+
+  removePlayer(stoneId) {
+    this.stones.delete(stoneId);
+    this._inputs.delete(stoneId);
+  }
+
+  addBot(nickname) {
+    const stoneId = this.addPlayer(null, nickname);
+    this._bots.set(stoneId, new RuleBasedBot(stoneId));
+    return stoneId;
+  }
+
+  removeBot(stoneId) {
+    this.removePlayer(stoneId);
+    this._bots.delete(stoneId);
+  }
+
+  /** Store mouse intent; applied at next step(). Coordinates are relative to the player's viewport. */
+  setInput(stoneId, mouseX, mouseY, viewportW, viewportH) {
+    this._inputs.set(stoneId, { mouseX, mouseY, viewportW, viewportH });
+  }
+
+  /** Merge partial config values into the running simulation without a full reset. */
+  updateConfig(partial) {
+    Object.assign(this.config, partial);
+  }
+
+  /** Returns per-zone entity counts for balance inspection. */
+  getZoneStats() {
+    const { ZONES, MAP_HEIGHT } = this.config;
+    const zoneH = MAP_HEIGHT / ZONES.length;
+    const stats = ZONES.map((_, i) => ({ zoneIndex: i, stoneCount: 0, fragmentCount: 0, gearCount: 0 }));
+    for (const stone of this.stones.values()) {
+      if (!stone.alive) continue;
+      const z = Math.min(ZONES.length - 1, Math.floor(stone.y / zoneH));
+      if (z >= 0) stats[z].stoneCount++;
+    }
+    for (const frag of this.fragments) {
+      const z = Math.min(ZONES.length - 1, Math.floor(frag.y / zoneH));
+      if (z >= 0) stats[z].fragmentCount++;
+    }
+    for (const gear of this.gears) {
+      stats[gear.zoneIndex].gearCount++;
+    }
+    return stats;
+  }
+
+  /** Advance simulation by deltaMs milliseconds. Returns a GameState snapshot. */
+  step(deltaMs) {
+    this.tick++;
+    this._totalTime += deltaMs;
+    this._events = [];
+
+    // Bots decide using previous frame's state (1-tick perception delay)
+    if (this._lastState) {
+      for (const bot of this._bots.values()) {
+        bot.update(deltaMs, this._lastState, this);
+      }
+    }
+
+    // Respawn dead stones after their 2-second delay
+    for (const stone of this.stones.values()) {
+      if (!stone.alive && stone.respawnAt !== null && this._totalTime >= stone.respawnAt) {
+        this._respawnStone(stone);
+      }
+    }
+
+    for (const gear of this.gears) gear.update(deltaMs);
+
+    // Apply input + friction + movement + groggy
+    for (const [stoneId, stone] of this.stones) {
+      if (!stone.alive) continue;
+      const inp = this._inputs.get(stoneId);
+      if (inp) {
+        const dx = inp.mouseX - inp.viewportW / 2;
+        const dy = inp.mouseY - inp.viewportH / 2;
+        if (stone.groggyUntil > 0) stone.groggyUntil -= this.config.GROGGY_COUNTDOWN;
+        if (stone.groggyUntil <= 0)  stone.groggyUntil = 0;
+        if (Math.hypot(dx, dy) >= this.config.DEAD_ZONE_RADIUS) {
+          Physics.applyAcceleration(stone, Math.atan2(dy, dx), this.config);
+        }
+      }
+      stone.vx *= (this.config.FRICTION + Math.abs(stone.vx) / 450);
+      stone.vy *= (this.config.FRICTION + Math.abs(stone.vy) / 450);
+      if (Math.hypot(stone.vx, stone.vy) > this.config.MAX_SPEED) {
+        stone.vx *= this.config.MAX_SPEED / Math.hypot(stone.vx, stone.vy);
+        stone.vy *= this.config.MAX_SPEED / Math.hypot(stone.vx, stone.vy);
+      }
+      stone.x += stone.vx;
+      stone.y += stone.vy;
+
+      // Wall collision
+      if (stone.x - stone.radius * 0.5 < 0) {
+        this._killStone(stone);
+      } else if (stone.x + stone.radius * 0.5 > this.config.MAP_WIDTH) {
+        this._killStone(stone);
+      }
+      if (stone.y - stone.radius * 0.5 < 0) {
+        this._killStone(stone);
+      } else if (stone.y + stone.radius * 0.5 > this.config.MAP_HEIGHT) {
+        this._killStone(stone);
+      }
+    }
+
+    // Stone-stone collisions
+    const alive = [...this.stones.values()].filter(s => s.alive);
+    for (let i = 0; i < alive.length - 1; i++) {
+      for (let j = i + 1; j < alive.length; j++) {
+        const a = alive[i], b = alive[j];
+        if (Math.hypot(b.x - a.x, b.y - a.y) < a.radius + b.radius) {
+          Physics.resolveStoneCollision(a, b, this.config.RESTITUTION);
+          this._events.push({ type: 'collision' });
+        }
+      }
+    }
+
+    // Gear collisions — invincible stones are immune
+    for (const stone of alive) {
+      if (!stone.alive) continue;
+      if (this._totalTime < stone.invincibleUntil) continue;
+      for (const gear of this.gears) {
+        if (Physics.checkGearCollision(stone, gear)) {
+          this._killStone(stone);
+          break;
+        }
+      }
+    }
+
+    // Fragment physics + expiry
+    for (const f of this.fragments) {
+      f.vx *= this.config.FRICTION;
+      f.vy *= this.config.FRICTION;
+      f.x += f.vx;
+      f.y += f.vy;
+      f.ttl -= deltaMs;
+    }
+    this.fragments = this.fragments.filter(f => f.ttl > 0);
+
+    // Fragment absorption
+    const aliveNow = [...this.stones.values()].filter(s => s.alive);
+    this.fragments = this.fragments.filter(frag => {
+      for (const stone of aliveNow) {
+        if (Math.hypot(stone.x - frag.x, stone.y - frag.y) < stone.radius + frag.radius) {
+          stone.absorb(frag.area);
+          this._events.push({ type: 'absorb', x: frag.x, y: frag.y });
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Natural fragment spawn
+    this._spawnTimer += deltaMs;
+    if (this._spawnTimer >= this.config.SPAWN_INTERVAL) {
+      this._spawnTimer -= this.config.SPAWN_INTERVAL;
+      this._spawnNaturalFragments();
+    }
+
+    const state = this.getState();
+    this._lastState = state;
+    return state;
+  }
+
+  getState() {
+    return {
+      stones: [...this.stones.values()].map(s => ({
+        id: s.id, x: s.x, y: s.y, vx: s.vx, vy: s.vy,
+        radius: s.radius, color: s.color, nickname: s.nickname, alive: s.alive,
+        invincible: this._totalTime < s.invincibleUntil,
+      })),
+      gears: this.gears.map(g => ({
+        x: g.x, y: g.y, radius: g.radius, collisionRadius: g.collisionRadius,
+        zoneIndex: g.zoneIndex, angle: g.angle,
+      })),
+      fragments: this.fragments.map(f => ({
+        x: f.x, y: f.y, radius: f.radius, ttl: f.ttl, maxTtl: f.maxTtl, color: f.color,
+      })),
+      events: [...this._events],
+      tick: this.tick,
+    };
+  }
+
+  _killStone(stone) {
+    stone.alive = false;
+    stone.respawnAt = this._totalTime + 2000;
+    let fragment_spawned = 1;
+    const basic_radius = Math.sqrt(stone.radius * 0.7);
+    const target = Math.ceil(stone.radius);
+    let attempts = 0;
+    while (fragment_spawned <= stone.radius) {
+      // Guard: if stone died deep inside a gear every direction may be blocked
+      if (++attempts > target * 20) break;
+
+      const angle = Math.random() * 2 * Math.PI;
+      const speed = 1 + Math.random() * 2;
+      const radius = basic_radius + (Math.random() * 2 - 1) * basic_radius * 0.2;
+      const fx = stone.x + Math.cos(angle) * stone.radius;
+      const fy = stone.y + Math.sin(angle) * stone.radius;
+
+      // Skip fragments that land inside or within 20px of any gear's collision edge
+      const tooClose = this.gears.some(
+        gear => Math.hypot(fx - gear.x, fy - gear.y) < gear.collisionRadius + radius + 20
+      );
+      if (tooClose) continue;
+      fragment_spawned++;
+
+      this.fragments.push(new Fragment(fx, fy, radius,
+        Math.cos(angle) * speed, Math.sin(angle) * speed,
+        30000, stone.color,
+      ));
+    }
+  }
+
+  _respawnStone(stone) {
+    const { MAP_WIDTH, MAP_HEIGHT, ZONES, STONE_INIT_RADIUS } = this.config;
+    const zoneH = MAP_HEIGHT / ZONES.length;
+    const zone4Top = zoneH * (ZONES.length - 1);
+    stone.x = 100 + Math.random() * (MAP_WIDTH - 200);
+    stone.y = zone4Top + 50 + Math.random() * (zoneH - 100);
+    stone.vx = 0;
+    stone.vy = 0;
+    stone.radius = STONE_INIT_RADIUS;
+    stone.alive = true;
+    stone.respawnAt = null;
+    stone.invincibleUntil = this._totalTime + 1500;
+  }
+
+  _spawnNaturalFragments() {
+    const { MAP_WIDTH, MAP_HEIGHT, ZONES } = this.config;
+    const zoneH = MAP_HEIGHT / ZONES.length;
+    const count = 3 + Math.floor(Math.random() * 4); // 3–6 per interval
+    for (let i = 0; i < count; i++) {
+      let x, y, radius;
+      let attempts = 0;
+      do {
+        x = 50 + Math.random() * (MAP_WIDTH - 100);
+        y = 50 + Math.random() * (MAP_HEIGHT - 100);
+        const zone = Math.min(ZONES.length - 1, Math.floor(y / zoneH));
+        radius = zone <= 1
+          ? 8  + Math.random() * 4   // upper (hard) zones: 8–12 — big reward for risk
+          : zone >= 3
+            ? 3  + Math.random() * 3   // lower (safe) zones: 3–6
+            : 5  + Math.random() * 3;  // middle zone: 5–8
+        attempts++;
+      } while (
+        attempts < 10 &&
+        this.gears.some(g => Math.hypot(x - g.x, y - g.y) < g.collisionRadius + radius + 20)
+      );
+      if (attempts < 10) this.fragments.push(new Fragment(x, y, radius, 0, 0, 30000));
+    }
+  }
+}

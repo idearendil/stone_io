@@ -1,0 +1,22 @@
+export const CONFIG = {
+  MAX_SPEED: 30,
+  BASE_ACCEL: 1,
+  MASS_ACCEL_FACTOR: 0.0007,
+  DEAD_ZONE_RADIUS: 60,
+  RESTITUTION: 2.0,
+  GROGGY_COUNTDOWN: 0.3,
+  FRICTION: 0.9,
+  FRAGMENT_COUNT: 20,
+  SPAWN_INTERVAL: 300,
+  MAP_WIDTH: 4000,
+  MAP_HEIGHT: 8000,
+  STONE_INIT_RADIUS: 16,
+  MINIMAP_VIEW_RANGE: 1200,
+  ZONES: [
+    { gearRadiusMin: 320, gearRadiusMax: 640, gearSpacing: 6400, rpm: 30 },
+    { gearRadiusMin: 160,  gearRadiusMax: 320, gearSpacing: 3200, rpm: 40 },
+    { gearRadiusMin: 80,  gearRadiusMax: 160,  gearSpacing: 1600, rpm: 50  },
+    { gearRadiusMin: 40,  gearRadiusMax: 80,  gearSpacing: 800, rpm: 60  },
+    { gearRadiusMin: 20,  gearRadiusMax: 40,  gearSpacing: 400, rpm: 70  },
+  ],
+};
