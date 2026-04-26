@@ -1,7 +1,7 @@
 {
   "os":  "Windows-10-10.0.26200-SP0",
   "python":  "CPython 3.10.18",
-  "startedAt":  "2026-04-26T04:18:09.273014Z",
+  "startedAt":  "2026-04-26T04:24:42.666423Z",
   "args":  [
     "--n-agents",
     "25",
@@ -15,7 +15,7 @@
   "codePathLocal":  "train.py",
   "git":  {
     "remote":  "https://github.com/idearendil/stone_io.git",
-    "commit":  "1d673183fc48445c165a1c1eb32c116407f8e55f"
+    "commit":  "33fa334cb6366c1dd8114cc4f295c5aec9f81c0a"
   },
   "email":  "leetm2021@postech.ac.kr",
   "root":  "D:\\claude_projects\\stone_io\\rl",
@@ -28,7 +28,7 @@
   "disk":  {
     "/":  {
       "total":  "499797454848",
-      "used":  "279050821632"
+      "used":  "279051153408"
     }
   },
   "memory":  {
@@ -44,5 +44,5 @@
     }
   ],
   "cudaVersion":  "13.1",
-  "writerId":  "dbkaqgb1amb0ojkscytn3uycdqpd1w5a"
+  "writerId":  "nn23pcxnq7irtyaplgbdydblqoejseq9"
 }

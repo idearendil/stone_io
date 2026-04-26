@@ -1,0 +1,9 @@
+2026-04-26 13:24:42,671 INFO    MainThread:22144 [wandb_setup.py:_flush():81] Current SDK version is 0.26.1
+2026-04-26 13:24:42,671 INFO    MainThread:22144 [wandb_setup.py:_flush():81] Configure stats pid to 22144
+2026-04-26 13:24:42,671 INFO    MainThread:22144 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-04-26 13:24:42,672 INFO    MainThread:22144 [wandb_init.py:setup_run_log_directory():723] Logging user logs to D:\claude_projects\stone_io\rl\wandb\run-20260426_132442-ez2h3rl9\logs\debug.log
+2026-04-26 13:24:42,672 INFO    MainThread:22144 [wandb_init.py:setup_run_log_directory():724] Logging internal logs to D:\claude_projects\stone_io\rl\wandb\run-20260426_132442-ez2h3rl9\logs\debug-internal.log
+2026-04-26 13:24:42,672 INFO    MainThread:22144 [wandb_init.py:init():850] calling init triggers
+2026-04-26 13:24:42,672 INFO    MainThread:22144 [wandb_init.py:init():855] wandb.init called with sweep_config: {}
+config: {'n_agents': 25, 'n_opponents': 75, 'total_steps': 5000000, 'rollout_steps': 2048, 'n_envs': 2, 'checkpoint_dir': 'checkpoints', 'log_interval': 10, '_wandb': {}}
+2026-04-26 13:24:42,672 INFO    MainThread:22144 [wandb_init.py:init():898] starting backend

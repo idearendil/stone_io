@@ -282,6 +282,19 @@ def train(args: argparse.Namespace) -> None:
         )
         update_count += 1
 
+        # ---- wandb logging (every update) ----
+        mean_rew_log = np.mean(finished_rewards[-200:]) if finished_rewards else 0.0
+        mean_len_log = np.mean(finished_lengths[-200:]) if finished_lengths else 0.0
+        wandb.log({
+            'mean_reward': mean_rew_log,
+            'ep_len':      mean_len_log,
+            'policy_loss': loss_dict['policy_loss'],
+            'value_loss':  loss_dict['value_loss'],
+            'entropy':     loss_dict['entropy'],
+            'lr':          agent.optimizer.param_groups[0]['lr'],
+            'pool_size':   len(pool),
+        }, step=total_steps_done)
+
         # ---- pool / checkpoint management ----
         if update_count % POOL_EVERY == 0:
             pool.append(_snapshot(agent.model))
@@ -311,15 +324,6 @@ def train(args: argparse.Namespace) -> None:
                 f'lr={lr_now:.2e}  '
                 f'elapsed={elapsed:.0f}s'
             )
-            wandb.log({
-                'mean_reward':  mean_rew,
-                'ep_len':       mean_len,
-                'policy_loss':  loss_dict['policy_loss'],
-                'value_loss':   loss_dict['value_loss'],
-                'entropy':      loss_dict['entropy'],
-                'lr':           lr_now,
-                'pool_size':    len(pool),
-            }, step=total_steps_done)
 
     # ---- final save ----
     final_path = os.path.join(args.checkpoint_dir, 'final.pt')

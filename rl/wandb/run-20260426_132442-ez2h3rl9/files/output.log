@@ -1,0 +1,5 @@
+Launching environments...
+Envs ready. n_self=25  n_opp=75  n_envs=2
+update=   10  steps=  1024000  mean_reward= 31.102  ep_len=3512.4  policy_loss=-0.0017  value_loss= 0.7113  entropy=4.2692  lr=2.39e-04  elapsed=545s
+update=   20  steps=  2048000  mean_reward= 24.286  ep_len=2469.5  policy_loss=-0.0003  value_loss= 0.4757  entropy=5.6692  lr=1.77e-04  elapsed=1094s
+update=   30  steps=  3072000  mean_reward= 36.704  ep_len=3668.8  policy_loss=-0.0001  value_loss= 0.3001  entropy=6.8337  lr=1.16e-04  elapsed=1648s
