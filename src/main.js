@@ -84,6 +84,10 @@ window.addEventListener('keydown', e => {
     case 'M':
       renderer.minimap.toggleZoom();
       break;
+    case 'z':
+    case 'Z':
+      if (myId !== null) engine.boost(myId);
+      break;
   }
 });
 

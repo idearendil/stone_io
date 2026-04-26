@@ -23,6 +23,7 @@ export class GameEngine {
     this.stones = new Map();
     this.fragments = [];
     this._inputs = new Map();
+    this._boostCooldowns = new Map();
     this._spawnTimer = 0;
     this._events = [];
     this.gears = new MapGenerator(this._mapSeed).generateGears(this.config);
@@ -124,6 +125,38 @@ export class GameEngine {
         this._bots.set(stoneId, new RuleBasedBot(stoneId));
       }
     }
+  }
+
+  /**
+   * Instant boost toward the cursor. Costs 10 area; 1-second cooldown.
+   * Returns true if the boost was applied.
+   */
+  boost(stoneId) {
+    const cooldownEnd = this._boostCooldowns.get(stoneId) ?? 0;
+    if (this._totalTime < cooldownEnd) return false;
+
+    const stone = this.stones.get(stoneId);
+    if (!stone || !stone.alive) return false;
+
+    const { STONE_INIT_RADIUS, BOOST_IMPULSE, BOOST_COOLDOWN, BOOST_AREA_COST } = this.config;
+    if (stone.radius <= STONE_INIT_RADIUS) return false;
+
+    const inp = this._inputs.get(stoneId);
+    if (inp) {
+      const dx = inp.mouseX - inp.viewportW / 2;
+      const dy = inp.mouseY - inp.viewportH / 2;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0) {
+        stone.vx += (dx / dist) * BOOST_IMPULSE;
+        stone.vy += (dy / dist) * BOOST_IMPULSE;
+      }
+    }
+
+    stone.radius = Math.sqrt(Math.max(0, stone.area - BOOST_AREA_COST) / Math.PI);
+
+    this._boostCooldowns.set(stoneId, this._totalTime + BOOST_COOLDOWN);
+    this._events.push({ type: 'boost', stoneId });
+    return true;
   }
 
   /** Store mouse intent; applied at next step(). Coordinates are relative to the player's viewport. */
