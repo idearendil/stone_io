@@ -87,8 +87,9 @@ export class GameEngine {
     const stoneId = ++this._idCounter;
     const { MAP_WIDTH, MAP_HEIGHT, ZONES, STONE_INIT_RADIUS } = this.config;
     const zoneHeight = MAP_HEIGHT / ZONES.length;
-    const x = MAP_WIDTH * 0.1 + (stoneId % 9) * MAP_WIDTH * 0.09;
-    const y = MAP_HEIGHT - zoneHeight * 0.25;
+    const zone4Top = zoneHeight * (ZONES.length - 1);
+    const x = 100 + Math.random() * (MAP_WIDTH - 200);
+    const y = zone4Top + 50 + Math.random() * (zoneHeight - 100);
     this.stones.set(stoneId, new Stone(stoneId, x, y, STONE_INIT_RADIUS, COLORS[stoneId % COLORS.length], nickname));
     return stoneId;
   }

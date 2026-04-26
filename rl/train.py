@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import wandb
 
 # Allow importing sibling modules
 sys.path.insert(0, str(Path(__file__).parent))
@@ -164,6 +165,12 @@ def train(args: argparse.Namespace) -> None:
     finished_rewards: list[float] = []
     finished_lengths: list[int]   = []
 
+    wandb.init(
+        entity='leetm2021-postech',
+        project='stone_io',
+        config=vars(args),
+    )
+
     print('Launching environments...')
     vec_env = ParallelEnv(n_envs, env_kwargs_list)
     obs_dicts = vec_env.reset()
@@ -176,6 +183,12 @@ def train(args: argparse.Namespace) -> None:
     while total_steps_done < args.total_steps:
         # ---- collect rollout ----
         agent.model.eval()
+
+        # Assign each opponent a fixed pool model for this entire rollout
+        opp_pool_indices: dict[tuple[int, int], int | None] = {
+            (e, i): random.randrange(len(pool)) if pool else None
+            for e in range(E) for i in range(A, n_total)
+        }
 
         for step in range(T):
             # Batch all self-agent obs across envs: (E*A, OBS_DIM)
@@ -199,15 +212,15 @@ def train(args: argparse.Namespace) -> None:
 
             # Build full action dicts (self + opponents)
             env_action_dicts = []
-            pool_model = random.choice(pool) if pool else None
             for e in range(E):
                 acts: dict = {}
                 for i in range(A):
                     acts[f'agent_{i}'] = all_actions[e, i]
                 for i in range(A, n_total):
                     opp_obs = obs_dicts[e][f'agent_{i}']
-                    if pool_model is not None:
-                        acts[f'agent_{i}'] = _pool_act(opp_obs, pool_model)
+                    idx = opp_pool_indices[(e, i)]
+                    if idx is not None:
+                        acts[f'agent_{i}'] = _pool_act(opp_obs, pool[idx])
                     else:
                         acts[f'agent_{i}'] = np.random.uniform(-1, 1, ACT_DIM).astype(np.float32)
                 env_action_dicts.append(acts)
@@ -298,12 +311,22 @@ def train(args: argparse.Namespace) -> None:
                 f'lr={lr_now:.2e}  '
                 f'elapsed={elapsed:.0f}s'
             )
+            wandb.log({
+                'mean_reward':  mean_rew,
+                'ep_len':       mean_len,
+                'policy_loss':  loss_dict['policy_loss'],
+                'value_loss':   loss_dict['value_loss'],
+                'entropy':      loss_dict['entropy'],
+                'lr':           lr_now,
+                'pool_size':    len(pool),
+            }, step=total_steps_done)
 
     # ---- final save ----
     final_path = os.path.join(args.checkpoint_dir, 'final.pt')
     agent.save(final_path)
     print(f'Training complete. Final checkpoint → {final_path}')
     vec_env.close()
+    wandb.finish()
 
 
 # ------------------------------------------------------------------
