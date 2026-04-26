@@ -224,7 +224,7 @@ export class GameEngine {
       for (let j = i + 1; j < alive.length; j++) {
         const a = alive[i], b = alive[j];
         if (Math.hypot(b.x - a.x, b.y - a.y) < a.radius + b.radius) {
-          Physics.resolveStoneCollision(a, b, this.config.RESTITUTION);
+          Physics.resolveStoneCollision(a, b, this.config.RESTITUTION, this.config.COLLISION_FRICTION);
           this._events.push({ type: 'collision' });
         }
       }

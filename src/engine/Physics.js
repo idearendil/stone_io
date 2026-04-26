@@ -11,15 +11,35 @@ export function applyAcceleration(stone, targetAngle, dist, config) {
 /**
  * Impulse-based 2D collision. Uses area as mass proxy (mass = pi*r^2).
  * Conserves momentum for any restitution value.
+ *
+ * collisionFriction blends relative-velocity direction into the collision
+ * normal, simulating surface friction on a glancing hit.
  */
-export function resolveStoneCollision(s1, s2, restitution) {
+export function resolveStoneCollision(s1, s2, restitution, collisionFriction) {
   const dx = s2.x - s1.x;
   const dy = s2.y - s1.y;
   const dist = Math.hypot(dx, dy);
   if (dist === 0) return;
 
-  const nx = dx / dist;
-  const ny = dy / dist;
+  // Geometric normal (center-to-center)
+  const gnx = dx / dist;
+  const gny = dy / dist;
+
+  // Blend with relative-velocity direction to simulate surface friction
+  let nx, ny;
+  const rvx = s1.vx - s2.vx;
+  const rvy = s1.vy - s2.vy;
+  const rvLen = Math.hypot(rvx, rvy);
+  if (rvLen > 0 && collisionFriction > 0) {
+    const bx = gnx + collisionFriction * (rvx / rvLen);
+    const by = gny + collisionFriction * (rvy / rvLen);
+    const bLen = Math.hypot(bx, by);
+    nx = bx / bLen;
+    ny = by / bLen;
+  } else {
+    nx = gnx;
+    ny = gny;
+  }
 
   const m1 = s1.area;
   const m2 = s2.area;
@@ -40,14 +60,14 @@ export function resolveStoneCollision(s1, s2, restitution) {
   s1.last_impulse = impulse / m1;
   s2.last_impulse = impulse / m2;
 
-  // Positional correction — push overlapping stones apart equally
+  // Positional correction — use geometric normal to push overlapping stones apart
   const overlap = s1.radius + s2.radius - dist;
   if (overlap > 0) {
     const half = overlap * 0.5;
-    s1.x -= half * nx;
-    s1.y -= half * ny;
-    s2.x += half * nx;
-    s2.y += half * ny;
+    s1.x -= half * gnx;
+    s1.y -= half * gny;
+    s2.x += half * gnx;
+    s2.y += half * gny;
   }
 }
 

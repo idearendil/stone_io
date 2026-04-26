@@ -17,3 +17,8 @@ config: {'n_agents': 25, 'n_opponents': 75, 'total_steps': 5000000, 'rollout_ste
 2026-04-26 13:24:46,124 INFO    MainThread:22144 [wandb_run.py:_redirect():2472] Wrapping output streams.
 2026-04-26 13:24:46,124 INFO    MainThread:22144 [wandb_run.py:_redirect():2495] Redirects installed.
 2026-04-26 13:24:46,128 INFO    MainThread:22144 [wandb_init.py:init():1094] run started, returning control to user process
+2026-04-26 14:09:32,925 INFO    MainThread:22144 [wandb_run.py:_finish():2321] finishing run leetm2021-postech/stone_io/ez2h3rl9
+2026-04-26 14:09:32,927 INFO    MainThread:22144 [wandb_run.py:_atexit_cleanup():2520] got exitcode: 0
+2026-04-26 14:09:32,928 INFO    MainThread:22144 [wandb_run.py:_restore():2502] restore
+2026-04-26 14:09:32,928 INFO    MainThread:22144 [wandb_run.py:_restore():2508] restore done
+2026-04-26 14:09:34,267 INFO    MainThread:22144 [wandb_run.py:_footer_sync_info():3889] logging synced files

@@ -1,0 +1,76 @@
+_wandb:
+    value:
+        cli_version: 0.26.1
+        e:
+            nn23pcxnq7irtyaplgbdydblqoejseq9:
+                args:
+                    - --n-agents
+                    - "25"
+                    - --n-opponents
+                    - "75"
+                    - --n-envs
+                    - "2"
+                codePath: rl\train.py
+                codePathLocal: train.py
+                cpu_count: 6
+                cpu_count_logical: 12
+                cudaVersion: "13.1"
+                disk:
+                    /:
+                        total: "499797454848"
+                        used: "279051153408"
+                email: leetm2021@postech.ac.kr
+                executable: D:\other_programs\anaconda3\envs\fiat_dl\python.exe
+                git:
+                    commit: 33fa334cb6366c1dd8114cc4f295c5aec9f81c0a
+                    remote: https://github.com/idearendil/stone_io.git
+                gpu: NVIDIA GeForce RTX 3070 Ti
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 6144
+                      memoryTotal: "8589934592"
+                      name: NVIDIA GeForce RTX 3070 Ti
+                      uuid: GPU-62a5a7d7-54b9-0497-640f-30583c3b185b
+                host: MAGI3
+                memory:
+                    total: "34191097856"
+                os: Windows-10-10.0.26200-SP0
+                program: D:\claude_projects\stone_io\rl\train.py
+                python: CPython 3.10.18
+                root: D:\claude_projects\stone_io\rl
+                startedAt: "2026-04-26T04:24:42.666423Z"
+                writerId: nn23pcxnq7irtyaplgbdydblqoejseq9
+        m: []
+        python_version: 3.10.18
+        t:
+            "1":
+                - 1
+                - 15
+            "2":
+                - 1
+                - 15
+            "3":
+                - 2
+                - 16
+                - 61
+            "4": 3.10.18
+            "5": 0.26.1
+            "8":
+                - 3
+            "12": 0.26.1
+            "13": windows-amd64
+checkpoint_dir:
+    value: checkpoints
+log_interval:
+    value: 10
+n_agents:
+    value: 25
+n_envs:
+    value: 2
+n_opponents:
+    value: 75
+rollout_steps:
+    value: 2048
+total_steps:
+    value: 5000000

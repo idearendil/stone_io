@@ -2,6 +2,7 @@ const SLIDER_DEFS = [
   { key: 'BASE_ACCEL',        min: 0.1,   max: 1.0,   step: 0.05   },
   { key: 'MASS_ACCEL_FACTOR', min: 0,     max: 0.001, step: 0.00005 },
   { key: 'RESTITUTION',       min: 0,     max: 1,     step: 0.05   },
+  { key: 'COLLISION_FRICTION', min: 0,    max: 1,     step: 0.05   },
   { key: 'FRICTION',          min: 0.9,   max: 1.0,   step: 0.001  },
 ];
 
