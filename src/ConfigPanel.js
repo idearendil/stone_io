@@ -6,9 +6,10 @@ const SLIDER_DEFS = [
 ];
 
 export class ConfigPanel {
-  constructor(config, onUpdate) {
+  constructor(config, onUpdate, onBotType = null) {
     this.config = config;
     this.onUpdate = onUpdate;
+    this._onBotType = onBotType;
     this._visible = false;
     this._el = this._build();
   }
@@ -34,6 +35,8 @@ export class ConfigPanel {
 
     for (const def of SLIDER_DEFS) panel.appendChild(this._row(def));
 
+    if (this._onBotType) panel.appendChild(this._botSection());
+
     const hint = document.createElement('div');
     hint.textContent = '` debug   M minimap zoom';
     hint.style.cssText = 'margin-top:8px;color:#666;font-size:10px';
@@ -41,6 +44,76 @@ export class ConfigPanel {
 
     document.body.appendChild(panel);
     return panel;
+  }
+
+  _botSection() {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-top:10px;border-top:1px solid rgba(200,168,75,0.2);padding-top:8px';
+
+    const title = document.createElement('div');
+    title.textContent = 'BOT TYPE';
+    title.style.cssText = 'color:#C8A84B;font-size:10px;letter-spacing:1px;margin-bottom:6px';
+    wrap.appendChild(title);
+
+    // Radio buttons
+    let loadedWeights = null;
+    const radioWrap = document.createElement('div');
+    radioWrap.style.cssText = 'display:flex;gap:12px;margin-bottom:6px';
+
+    const makeRadio = (label, value) => {
+      const lbl = document.createElement('label');
+      lbl.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer;color:#ccc';
+      const r = document.createElement('input');
+      r.type  = 'radio';
+      r.name  = 'bot-type';
+      r.value = value;
+      r.checked = value === 'rule-based';
+      r.style.accentColor = '#C8A84B';
+      r.addEventListener('change', () => {
+        if (value === 'trained' && !loadedWeights) {
+          status.textContent = 'Load bot.json first';
+          r.checked = false;
+          document.querySelector('input[name="bot-type"][value="rule-based"]').checked = true;
+          return;
+        }
+        this._onBotType(value, loadedWeights);
+        status.textContent = value === 'trained' ? 'Using trained bot' : 'Using rule-based bot';
+      });
+      lbl.appendChild(r);
+      lbl.appendChild(document.createTextNode(label));
+      return lbl;
+    };
+    radioWrap.appendChild(makeRadio('Rule-based', 'rule-based'));
+    radioWrap.appendChild(makeRadio('Trained',    'trained'));
+    wrap.appendChild(radioWrap);
+
+    // File input for weights JSON
+    const fileInput = document.createElement('input');
+    fileInput.type  = 'file';
+    fileInput.accept = '.json';
+    fileInput.style.cssText = 'font:10px monospace;color:#ccc;width:100%;cursor:pointer';
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          loadedWeights = JSON.parse(e.target.result);
+          status.textContent = `Loaded: ${file.name}`;
+        } catch {
+          status.textContent = 'Error: invalid JSON';
+        }
+      };
+      reader.readAsText(file);
+    });
+    wrap.appendChild(fileInput);
+
+    const status = document.createElement('div');
+    status.style.cssText = 'font-size:10px;color:#666;margin-top:3px';
+    status.textContent = 'No weights loaded';
+    wrap.appendChild(status);
+
+    return wrap;
   }
 
   _row({ key, min, max, step }) {

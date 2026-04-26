@@ -3,6 +3,7 @@ import { Fragment } from './entities/Fragment.js';
 import { MapGenerator } from './MapGenerator.js';
 import * as Physics from './Physics.js';
 import { RuleBasedBot } from '../bots/RuleBasedBot.js';
+import { TrainedBot } from '../bots/TrainedBot.js';
 
 const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#e91e63'];
 
@@ -106,6 +107,22 @@ export class GameEngine {
   removeBot(stoneId) {
     this.removePlayer(stoneId);
     this._bots.delete(stoneId);
+  }
+
+  /**
+   * Swap all bots to a different implementation.
+   * type: 'rule-based' | 'trained'
+   * weightsJson: parsed JSON from bot.json (required when type === 'trained')
+   */
+  setBotType(type, weightsJson = null) {
+    this._trainedWeights = weightsJson;
+    for (const [stoneId] of this._bots) {
+      if (type === 'trained' && weightsJson) {
+        this._bots.set(stoneId, new TrainedBot(stoneId, weightsJson));
+      } else {
+        this._bots.set(stoneId, new RuleBasedBot(stoneId));
+      }
+    }
   }
 
   /** Store mouse intent; applied at next step(). Coordinates are relative to the player's viewport. */

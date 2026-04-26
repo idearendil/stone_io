@@ -6,7 +6,11 @@ import { CONFIG } from './config.js';
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('game'));
 const engine = new GameEngine(CONFIG);
 const renderer = new Renderer(canvas, CONFIG);
-const configPanel = new ConfigPanel(CONFIG, partial => engine.updateConfig(partial));
+const configPanel = new ConfigPanel(
+  CONFIG,
+  partial => engine.updateConfig(partial),
+  (type, weights) => engine.setBotType(type, weights),
+);
 
 function resize() {
   renderer.resize(window.innerWidth, window.innerHeight);
