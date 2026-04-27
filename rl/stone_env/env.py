@@ -98,6 +98,10 @@ class StoneEnv(gym.Env):
             {},
         )
 
+    def get_radii(self) -> list[float]:
+        result = self._bridge_().get('/radii')
+        return result.get('radii', [])
+
     def close(self) -> None:
         if self._bridge is not None:
             self._bridge.close()

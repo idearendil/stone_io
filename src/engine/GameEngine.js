@@ -13,6 +13,8 @@ export class GameEngine {
     this._idCounter = 0;
     this._mapSeed = 12345;
     this._bots = new Map();
+    this._botType = 'rule-based';
+    this._trainedWeights = null;
     this._lastState = null;
     this.reset();
   }
@@ -102,7 +104,10 @@ export class GameEngine {
 
   addBot(nickname) {
     const stoneId = this.addPlayer(null, nickname);
-    this._bots.set(stoneId, new RuleBasedBot(stoneId));
+    const bot = (this._botType === 'trained' && this._trainedWeights)
+      ? new TrainedBot(stoneId, this._trainedWeights)
+      : new RuleBasedBot(stoneId);
+    this._bots.set(stoneId, bot);
     return stoneId;
   }
 
@@ -117,6 +122,7 @@ export class GameEngine {
    * weightsJson: parsed JSON from bot.json (required when type === 'trained')
    */
   setBotType(type, weightsJson = null) {
+    this._botType = type;
     this._trainedWeights = weightsJson;
     for (const [stoneId] of this._bots) {
       if (type === 'trained' && weightsJson) {

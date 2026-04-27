@@ -189,9 +189,9 @@ const server = http.createServer((req, res) => {
 
           let reward;
           if (died) {
-            reward = -10.0;
+            reward = -prevArea * 0.1;
           } else if (alive) {
-            reward = (currArea - prevArea) * 0.1 + 0.005;
+            reward = (currArea - prevArea) * 0.1;
           } else {
             reward = 0.0;
           }
@@ -211,6 +211,15 @@ const server = http.createServer((req, res) => {
         if (!engine) { res.writeHead(400); res.end('{"error":"call /reset first"}'); return; }
         res.writeHead(200);
         res.end(JSON.stringify(engine.getState()));
+
+      } else if (method === 'GET' && path === '/radii') {
+        if (!engine) { res.writeHead(400); res.end('{"error":"call /reset first"}'); return; }
+        const radii = [];
+        for (const stone of engine.stones.values()) {
+          if (stone.alive) radii.push(stone.radius);
+        }
+        res.writeHead(200);
+        res.end(JSON.stringify({ radii }));
 
       } else if (method === 'POST' && path === '/config') {
         const partial = JSON.parse(body);

@@ -18,6 +18,9 @@ import sys
 import time
 from pathlib import Path
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import wandb
@@ -35,7 +38,7 @@ OBS_DIM    = 61
 ACT_DIM    = 3
 BASE_PORT  = 8000
 POOL_SIZE  = 5
-POOL_EVERY = 10   # updates
+POOL_EVERY = 5   # updates
 CKPT_EVERY = 10  # updates
 
 
@@ -55,6 +58,8 @@ def _env_worker(worker_id: int, env_kwargs: dict, pipe: mp.connection.Connection
             elif cmd == 'step':
                 result = env.step(payload)
                 pipe.send(result)
+            elif cmd == 'radii':
+                pipe.send(env.get_radii())
             elif cmd == 'close':
                 env.close()
                 break
@@ -91,6 +96,11 @@ class ParallelEnv:
     def step(self, actions_list: list[dict]) -> list[tuple]:
         for pipe, acts in zip(self._parent_pipes, actions_list):
             pipe.send(('step', acts))
+        return [pipe.recv() for pipe in self._parent_pipes]
+
+    def get_radii(self) -> list[list[float]]:
+        for pipe in self._parent_pipes:
+            pipe.send(('radii', None))
         return [pipe.recv() for pipe in self._parent_pipes]
 
     def close(self) -> None:
@@ -300,17 +310,34 @@ def train(args: argparse.Namespace) -> None:
         )
         update_count += 1
 
+        # ---- radius histogram (all alive stones across all envs) ----
+        all_radii = []
+        for radii_list in vec_env.get_radii():
+            all_radii.extend(radii_list)
+        clamped = [min(r, 400.0) for r in all_radii]
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.hist(clamped, bins=40, range=(0, 400), color='steelblue', edgecolor='black')
+        ax.set_xlabel('Radius')
+        ax.set_ylabel('Count')
+        ax.set_xlim(0, 400)
+        ax.set_title(f'Stone Radius Distribution (update {update_count})')
+        hist_path = os.path.join(args.checkpoint_dir, '_radius_hist.png')
+        fig.savefig(hist_path, dpi=80, bbox_inches='tight')
+        plt.close(fig)
+
         # ---- wandb logging (every update) ----
         mean_rew_log = np.mean(finished_rewards[-200:]) if finished_rewards else 0.0
         mean_len_log = np.mean(finished_lengths[-200:]) if finished_lengths else 0.0
         wandb.log({
-            'mean_reward': mean_rew_log,
-            'ep_len':      mean_len_log,
-            'policy_loss': loss_dict['policy_loss'],
-            'value_loss':  loss_dict['value_loss'],
-            'entropy':     loss_dict['entropy'],
-            'lr':          agent.optimizer.param_groups[0]['lr'],
-            'pool_size':   len(pool),
+            'mean_reward':  mean_rew_log,
+            'ep_len':       mean_len_log,
+            'policy_loss':  loss_dict['policy_loss'],
+            'value_loss':   loss_dict['value_loss'],
+            'entropy':      loss_dict['entropy'],
+            'lr':           agent.optimizer.param_groups[0]['lr'],
+            'pool_size':    len(pool),
+            'radius_hist':  wandb.Image(hist_path),
         }, step=total_steps_done)
 
         # ---- pool / checkpoint management ----
