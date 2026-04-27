@@ -48,17 +48,17 @@ export function resolveStoneCollision(s1, s2, restitution, collisionFriction) {
   const relVn = (s1.vx - s2.vx) * nx + (s1.vy - s2.vy) * ny;
   if (relVn <= 0) return;
 
-  const impulse = (1 + restitution) * relVn / (1 / m1 + 1 / m2);
+  const impulse = (1 + restitution * Math.sqrt((m1 + m2) / 2 / 256)) * relVn / (1 / m1 + 1 / m2);
 
   s1.vx -= (impulse / m1) * nx;
   s1.vy -= (impulse / m1) * ny;
   s2.vx += (impulse / m2) * nx;
   s2.vy += (impulse / m2) * ny;
 
-  s1.groggyUntil = impulse / m1;
-  s2.groggyUntil = impulse / m2;
-  s1.last_impulse = impulse / m1;
-  s2.last_impulse = impulse / m2;
+  s1.groggyUntil = impulse / ((m1 + m2) / 2) ** 1.6;
+  s2.groggyUntil = impulse / ((m1 + m2) / 2) ** 1.6;
+  s1.last_impulse = impulse / ((m1 + m2) / 2) ** 1.6;
+  s2.last_impulse = impulse / ((m1 + m2) / 2) ** 1.6;
 
   // Positional correction — use geometric normal to push overlapping stones apart
   const overlap = s1.radius + s2.radius - dist;

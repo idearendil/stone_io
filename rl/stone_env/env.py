@@ -5,7 +5,7 @@ import gymnasium as gym
 
 from .bridge import HeadlessBridge
 
-OBS_SIZE = 42
+OBS_SIZE = 61
 
 # Auto-increment port so multiple envs in the same process don't collide
 _next_port: list[int] = [7777]
@@ -41,7 +41,7 @@ class StoneEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(OBS_SIZE,), dtype=np.float32
         )
         self.action_space = gym.spaces.Box(
-            low=-1.0, high=1.0, shape=(2,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(3,), dtype=np.float32
         )
 
     # ------------------------------------------------------------------

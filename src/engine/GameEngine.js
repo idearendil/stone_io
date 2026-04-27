@@ -229,8 +229,10 @@ export class GameEngine {
           Physics.applyAcceleration(stone, Math.atan2(dy, dx), dist, this.config);
         }
       }
-      stone.vx *= (this.config.FRICTION + Math.abs(stone.vx) / 450);
-      stone.vy *= (this.config.FRICTION + Math.abs(stone.vy) / 450);
+      const fric_x = this.config.FRICTION + Math.abs(stone.vx) / 450;
+      const fric_y = this.config.FRICTION + Math.abs(stone.vy) / 450;
+      stone.vx *= (fric_x + (1 - fric_x) * stone.groggyUntil / stone.last_impulse);
+      stone.vy *= (fric_y + (1 - fric_y) * stone.groggyUntil / stone.last_impulse);
       if (Math.hypot(stone.vx, stone.vy) > this.config.MAX_SPEED) {
         stone.vx *= this.config.MAX_SPEED / Math.hypot(stone.vx, stone.vy);
         stone.vy *= this.config.MAX_SPEED / Math.hypot(stone.vx, stone.vy);
@@ -362,6 +364,9 @@ export class GameEngine {
       const fx = stone.x + Math.cos(angle) * stone.radius;
       const fy = stone.y + Math.sin(angle) * stone.radius;
 
+      const { MAP_WIDTH, MAP_HEIGHT } = this.config;
+      if (fx - radius < 0 || fx + radius > MAP_WIDTH ||
+          fy - radius < 0 || fy + radius > MAP_HEIGHT) continue;
       const tooClose = this.gears.some(
         gear => Math.hypot(fx - gear.x, fy - gear.y) < gear.collisionRadius + radius + 20
       );

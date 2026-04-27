@@ -72,7 +72,6 @@ class RolloutBuffer:
         rewards   = np.array(self.rewards,   dtype=np.float32)
         dones     = np.array(self.dones,     dtype=np.float32)
 
-        # Treat last_values as a single scalar (last bootstrap value)
         next_val  = float(last_values)
 
         advantages = np.zeros(n, dtype=np.float32)
@@ -98,16 +97,15 @@ class RolloutBuffer:
 class PPOAgent:
     def __init__(
         self,
-        obs_dim:     int   = 42,
-        act_dim:     int   = 2,
+        obs_dim:     int   = 61,
+        act_dim:     int   = 3,
         lr:          float = LR,
-        total_steps: int   = 5_000_000,
+        total_steps: int   = 50_000_000,
     ):
-        self.model = ActorCritic(obs_dim, act_dim)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = ActorCritic(obs_dim, act_dim).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr, eps=1e-5)
 
-        # Linear LR decay — scheduler step is called once per PPO update
-        # total_updates is an estimate; clip at 0 to avoid negative LR
         self._total_steps  = total_steps
         self._rollout_size = 1          # updated by train.py when known
         self._update_count = 0
@@ -121,10 +119,10 @@ class PPOAgent:
     @torch.no_grad()
     def act(self, obs: np.ndarray) -> tuple[np.ndarray, float, float]:
         """Single observation → (action, log_prob, value)."""
-        t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
+        t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0).to(self.device)
         action, log_prob, _, value = self.model.get_action_and_value(t)
         return (
-            action.squeeze(0).numpy(),
+            action.squeeze(0).cpu().numpy(),
             log_prob.item(),
             value.item(),
         )
@@ -134,9 +132,9 @@ class PPOAgent:
         self, obs: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Batched: (N, obs_dim) → actions (N, act_dim), log_probs (N,), values (N,)."""
-        t = torch.as_tensor(obs, dtype=torch.float32)
+        t = torch.as_tensor(obs, dtype=torch.float32).to(self.device)
         actions, log_probs, _, values = self.model.get_action_and_value(t)
-        return actions.numpy(), log_probs.numpy(), values.numpy()
+        return actions.cpu().numpy(), log_probs.cpu().numpy(), values.cpu().numpy()
 
     # ------------------------------------------------------------------
     def update(
@@ -150,14 +148,13 @@ class PPOAgent:
         """Run N_EPOCHS of minibatch PPO updates. Returns loss metrics."""
         self._update_count += 1
 
-        # Normalise advantages
         adv = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        t_obs  = torch.as_tensor(obs,       dtype=torch.float32)
-        t_acts = torch.as_tensor(actions,   dtype=torch.float32)
-        t_lp   = torch.as_tensor(log_probs, dtype=torch.float32)
-        t_adv  = torch.as_tensor(adv,       dtype=torch.float32)
-        t_ret  = torch.as_tensor(returns,   dtype=torch.float32)
+        t_obs  = torch.as_tensor(obs,       dtype=torch.float32).to(self.device)
+        t_acts = torch.as_tensor(actions,   dtype=torch.float32).to(self.device)
+        t_lp   = torch.as_tensor(log_probs, dtype=torch.float32).to(self.device)
+        t_adv  = torch.as_tensor(adv,       dtype=torch.float32).to(self.device)
+        t_ret  = torch.as_tensor(returns,   dtype=torch.float32).to(self.device)
 
         n = len(obs)
         pg_losses, v_losses, ent_vals = [], [], []
@@ -210,7 +207,7 @@ class PPOAgent:
         }, path)
 
     def load(self, path: str) -> None:
-        ckpt = torch.load(path, map_location='cpu', weights_only=False)
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(ckpt['model'])
         self.optimizer.load_state_dict(ckpt['optimizer'])
         self._scheduler.load_state_dict(ckpt['scheduler'])

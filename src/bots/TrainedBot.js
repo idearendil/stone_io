@@ -14,67 +14,81 @@ export class TrainedBot {
     const stone = engine.stones.get(this.stoneId);
     if (!stone || !stone.alive) return;
 
-    const obs    = this._buildObs(stone, engine);
-    const action = this._forward(obs);          // [dx, dy] ∈ [-1, 1]²
-    const VP     = 200;
+    const obs = this._buildObs(stone, engine);
+    const raw = this._forward(obs);   // raw linear output: [dx_raw, dy_raw, boost_raw]
+    const dx    = Math.tanh(raw[0]);
+    const dy    = Math.tanh(raw[1]);
+    const boost = 1 / (1 + Math.exp(-raw[2])) > 0.5;
+
+    const VP = 200;
     engine.setInput(
       this.stoneId,
-      VP / 2 + action[0] * 120,
-      VP / 2 + action[1] * 120,
+      VP / 2 + dx * 120,
+      VP / 2 + dy * 120,
       VP, VP,
     );
+    if (boost) engine.boost(this.stoneId);
   }
 
   // ---------------------------------------------------------------------------
   // Observation builder — must match HeadlessServer.js buildObs exactly
-  // Layout: [0-5] self  [6-20] 5 frags×3  [21-32] 4 stones×3  [33-41] 3 gears×3
+  // [0-3] wall log-dists  [4-7] self  [8-27] 5 frags×4
+  // [28-51] 4 stones×6   [52-60] 3 gears×3
   // ---------------------------------------------------------------------------
 
   _buildObs(stone, engine) {
-    const obs = new Float32Array(42);
-    const { MAP_WIDTH, MAP_HEIGHT, MAX_SPEED } = engine.config;
+    const obs = new Float32Array(61);
+    const { MAP_WIDTH, MAP_HEIGHT } = engine.config;
     const { x, y, vx, vy, radius } = stone;
 
-    // [0-5] self
-    obs[0] = x / MAP_WIDTH;
-    obs[1] = y / MAP_HEIGHT;
-    obs[2] = vx / MAX_SPEED;
-    obs[3] = vy / MAX_SPEED;
-    obs[4] = radius / 1000;
-    obs[5] = 1.0;
+    // [0-3] log wall distances (capped at 300)
+    obs[0] = Math.log(Math.max(0, Math.min(x - radius * 0.5, 300)) + 1);
+    obs[1] = Math.log(Math.max(0, Math.min(MAP_WIDTH - x - radius * 0.5, 300)) + 1);
+    obs[2] = Math.log(Math.max(0, Math.min(y - radius * 0.5, 300)) + 1);
+    obs[3] = Math.log(Math.max(0, Math.min(MAP_HEIGHT - y - radius * 0.5, 300)) + 1);
 
-    // [6-20] 5 nearest fragments (uses spatial grid — same O(1) as RuleBasedBot)
+    // [4-7] self
+    obs[4] = Math.log(Math.abs(vx) + 1) * Math.sign(vx);
+    obs[5] = Math.log(Math.abs(vy) + 1) * Math.sign(vy);
+    obs[6] = Math.log(Math.abs(radius) + 1);
+    obs[7] = Math.floor((MAP_HEIGHT - y) / MAP_HEIGHT * 5);
+
+    // [8-27] 5 nearest fragments (dx, dy, area, dist)
     const nearFrags = engine.getFragmentsNear(x, y)
       .sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - ((b.x - x) ** 2 + (b.y - y) ** 2));
     for (let i = 0; i < 5 && i < nearFrags.length; i++) {
       const f    = nearFrags[i];
-      const base = 6 + i * 3;
-      obs[base]     = (f.x - x) / 1200;
-      obs[base + 1] = (f.y - y) / 1200;
-      obs[base + 2] = f.area   / 200;
+      const base = 8 + i * 4;
+      obs[base]     = Math.log(Math.abs(f.x - x) + 1) * Math.sign(f.x - x);
+      obs[base + 1] = Math.log(Math.abs(f.y - y) + 1) * Math.sign(f.y - y);
+      obs[base + 2] = Math.log(f.area + 1);
+      obs[base + 3] = Math.log(Math.hypot(f.x - x, f.y - y) + 1);
     }
 
-    // [21-32] 4 nearest other alive stones
+    // [28-51] 4 nearest other alive stones (dx, dy, radius_ratio, dvx, dvy, dist)
     const others = [...engine.stones.values()]
       .filter(s => s.id !== this.stoneId && s.alive)
       .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
     for (let i = 0; i < 4 && i < others.length; i++) {
       const s    = others[i];
-      const base = 21 + i * 3;
-      obs[base]     = (s.x - x)      / 1200;
-      obs[base + 1] = (s.y - y)      / 1200;
-      obs[base + 2] = s.radius / radius;
+      const base = 28 + i * 6;
+      obs[base]     = Math.log(Math.abs(s.x - x) + 1) * Math.sign(s.x - x);
+      obs[base + 1] = Math.log(Math.abs(s.y - y) + 1) * Math.sign(s.y - y);
+      obs[base + 2] = Math.log(s.radius / radius);
+      obs[base + 3] = Math.log(Math.abs(s.vx - vx) + 1) * Math.sign(s.vx - vx);
+      obs[base + 4] = Math.log(Math.abs(s.vy - vy) + 1) * Math.sign(s.vy - vy);
+      obs[base + 5] = Math.log(Math.max(0, Math.hypot(s.x - x, s.y - y) - s.radius - radius) + 1);
     }
 
-    // [33-41] 3 nearest gears
+    // [52-60] 3 nearest gears
     const gears = [...engine.gears]
       .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
     for (let i = 0; i < 3 && i < gears.length; i++) {
       const g    = gears[i];
-      const base = 33 + i * 3;
-      obs[base]     = (g.x - x)           / 1200;
-      obs[base + 1] = (g.y - y)           / 1200;
-      obs[base + 2] = g.collisionRadius   / 1200;
+      const base = 52 + i * 3;
+      obs[base]     = Math.log(Math.abs(g.x - x) + 1) * Math.sign(g.x - x);
+      obs[base + 1] = Math.log(Math.abs(g.y - y) + 1) * Math.sign(g.y - y);
+      obs[base + 2] = Math.log(Math.max(0, radius + g.collisionRadius - Math.hypot(x - g.x, y - g.y)) + 1);
     }
 
     return obs;

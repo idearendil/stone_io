@@ -1,4 +1,6 @@
 node_modules/
 dist/
 github_token.txt
+wandb_api_key.txt
+wandb
 .claude/

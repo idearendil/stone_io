@@ -18,6 +18,19 @@ export class RuleBasedBot {
     const mouseX = HALF_VP + Math.cos(angle) * PUSH_DIST;
     const mouseY = HALF_VP + Math.sin(angle) * PUSH_DIST;
     engine.setInput(this.stoneId, mouseX, mouseY, VIEWPORT_SIZE, VIEWPORT_SIZE);
+
+    if (this._shouldBoost(stone, state)) engine.boost(this.stoneId);
+  }
+
+  _shouldBoost(stone, state) {
+    const { x, y, radius } = stone;
+    for (const other of state.stones) {
+      if (other.id === this.stoneId || !other.alive) continue;
+      if (other.radius > radius * 1.3) {
+        if (Math.hypot(other.x - x, other.y - y) < 250) return true;
+      }
+    }
+    return false;
   }
 
   _decide(deltaMs, stone, state, engine) {

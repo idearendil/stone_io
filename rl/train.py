@@ -31,12 +31,12 @@ from network import ActorCritic
 # ------------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------------
-OBS_DIM    = 42
-ACT_DIM    = 2
+OBS_DIM    = 61
+ACT_DIM    = 3
 BASE_PORT  = 8000
 POOL_SIZE  = 5
-POOL_EVERY = 50   # updates
-CKPT_EVERY = 100  # updates
+POOL_EVERY = 10   # updates
+CKPT_EVERY = 10  # updates
 
 
 # ------------------------------------------------------------------
@@ -110,17 +110,22 @@ class ParallelEnv:
 # ------------------------------------------------------------------
 
 def _snapshot(model: ActorCritic) -> ActorCritic:
-    snap = ActorCritic(model.obs_dim, model.act_dim)
+    device = next(model.parameters()).device
+    snap = ActorCritic(model.obs_dim, model.act_dim).to(device)
     snap.load_state_dict(copy.deepcopy(model.state_dict()))
     snap.eval()
     return snap
 
 
 @torch.no_grad()
-def _pool_act(obs: np.ndarray, pool_model: ActorCritic) -> np.ndarray:
-    t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
-    action, *_ = pool_model.get_action_and_value(t)
-    return action.squeeze(0).numpy()
+def _pool_act_batch(obs_batch: np.ndarray, pool_model: ActorCritic) -> np.ndarray:
+    """Batch inference for all opponents sharing the same pool model.
+    obs_batch: (N, obs_dim) → actions: (N, act_dim)
+    """
+    device = next(pool_model.parameters()).device
+    t = torch.as_tensor(obs_batch, dtype=torch.float32).to(device)
+    actions, *_ = pool_model.get_action_and_value(t)
+    return actions.cpu().numpy()
 
 
 # ------------------------------------------------------------------
@@ -190,6 +195,12 @@ def train(args: argparse.Namespace) -> None:
             for e in range(E) for i in range(A, n_total)
         }
 
+        # Group opponents by pool model index for batched inference
+        # {idx_or_None: [(e, i), ...]}
+        opp_groups: dict[int | None, list[tuple[int, int]]] = {}
+        for (e, i), idx in opp_pool_indices.items():
+            opp_groups.setdefault(idx, []).append((e, i))
+
         for step in range(T):
             # Batch all self-agent obs across envs: (E*A, OBS_DIM)
             self_obs_batch = np.stack([
@@ -210,6 +221,18 @@ def train(args: argparse.Namespace) -> None:
                     buf_log_probs[step, e, i] = all_log_probs[e, i]
                     buf_values[step, e, i]    = all_values[e, i]
 
+            # Compute opponent actions — one batch forward pass per unique pool model
+            opp_actions: dict[tuple[int, int], np.ndarray] = {}
+            for idx, group in opp_groups.items():
+                if idx is None:
+                    for (e, i) in group:
+                        opp_actions[(e, i)] = np.random.uniform(-1, 1, ACT_DIM).astype(np.float32)
+                else:
+                    obs_batch = np.stack([obs_dicts[e][f'agent_{i}'] for (e, i) in group])
+                    batch_acts = _pool_act_batch(obs_batch, pool[idx])
+                    for j, (e, i) in enumerate(group):
+                        opp_actions[(e, i)] = batch_acts[j]
+
             # Build full action dicts (self + opponents)
             env_action_dicts = []
             for e in range(E):
@@ -217,12 +240,7 @@ def train(args: argparse.Namespace) -> None:
                 for i in range(A):
                     acts[f'agent_{i}'] = all_actions[e, i]
                 for i in range(A, n_total):
-                    opp_obs = obs_dicts[e][f'agent_{i}']
-                    idx = opp_pool_indices[(e, i)]
-                    if idx is not None:
-                        acts[f'agent_{i}'] = _pool_act(opp_obs, pool[idx])
-                    else:
-                        acts[f'agent_{i}'] = np.random.uniform(-1, 1, ACT_DIM).astype(np.float32)
+                    acts[f'agent_{i}'] = opp_actions[(e, i)]
                 env_action_dicts.append(acts)
 
             # Step all envs
@@ -307,6 +325,9 @@ def train(args: argparse.Namespace) -> None:
             agent.save(ckpt_path)
             print(f'  [checkpoint] saved → {ckpt_path}')
 
+        # Reset all envs to a clean initial state before next rollout
+        obs_dicts = vec_env.reset()
+
         # ---- logging ----
         if update_count % args.log_interval == 0:
             elapsed = time.time() - t_start
@@ -337,10 +358,10 @@ def train(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description='PPO self-play training for Stone.io')
-    p.add_argument('--n-agents',        type=int,   default=25)
-    p.add_argument('--n-opponents',     type=int,   default=75)
-    p.add_argument('--total-steps',     type=int,   default=5_000_000)
-    p.add_argument('--rollout-steps',   type=int,   default=2048)
+    p.add_argument('--n-agents',        type=int,   default=40)
+    p.add_argument('--n-opponents',     type=int,   default=60)
+    p.add_argument('--total-steps',     type=int,   default=10_000_000)
+    p.add_argument('--rollout-steps',   type=int,   default=2500)
     p.add_argument('--n-envs',          type=int,   default=2)
     p.add_argument('--checkpoint-dir',  type=str,   default='checkpoints')
     p.add_argument('--log-interval',    type=int,   default=10)

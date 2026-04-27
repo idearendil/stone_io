@@ -18,8 +18,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 from network import ActorCritic
 
-OBS_DIM = 42
-ACT_DIM = 2
+OBS_DIM = 61
+ACT_DIM = 3
 
 
 # ------------------------------------------------------------------
@@ -65,7 +65,7 @@ def export_json(model: ActorCritic, path: str) -> None:
             {'type': 'linear',     'weight': _t(sm[3].weight), 'bias': _t(sm[3].bias)},
             {'type': 'relu'},
             {'type': 'linear',     'weight': _t(ah[0].weight), 'bias': _t(ah[0].bias)},
-            {'type': 'tanh'},
+            # No activation — JS applies tanh to [:2] and sigmoid threshold to [2]
         ],
     }
 
@@ -88,7 +88,7 @@ if __name__ == '__main__':
     args = parse_args()
     out  = Path(args.out_dir)
 
-    model = ActorCritic(OBS_DIM, ACT_DIM)
+    model = ActorCritic(obs_dim=OBS_DIM, act_dim=ACT_DIM)
     ckpt  = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     model.load_state_dict(ckpt['model'])
 

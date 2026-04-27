@@ -6,7 +6,7 @@ const PORT       = Number(process.env.PORT       ?? 7777);
 const NUM_AGENTS = Number(process.env.NUM_AGENTS  ?? 1);
 const NUM_BOTS   = Number(process.env.NUM_BOTS    ?? 0);
 
-const OBS_SIZE = 42;
+const OBS_SIZE = 61;
 
 // Mutable config shared with engine (engine stores the same reference)
 const config = { ...CONFIG, ZONES: CONFIG.ZONES };
@@ -30,46 +30,56 @@ function buildObs(stoneId) {
   const { x, y, vx, vy, radius } = stone;
   const { MAP_WIDTH, MAP_HEIGHT, MAX_SPEED } = config;
 
-  // [0-5] self
-  obs[0] = x / MAP_WIDTH;
-  obs[1] = y / MAP_HEIGHT;
-  obs[2] = vx / MAX_SPEED;
-  obs[3] = vy / MAX_SPEED;
-  obs[4] = radius / 1000;
-  obs[5] = 1.0;
+  // [0-3] log distances to map edges (normalized by log of map dimensions)
+  const logW = Math.log(MAP_WIDTH);
+  const logH = Math.log(MAP_HEIGHT);
+  obs[0] = Math.log(Math.max(0, Math.min(x - radius * 0.5, 300)) + 1);
+  obs[1] = Math.log(Math.max(0, Math.min(MAP_WIDTH - x - radius * 0.5, 300)) + 1);
+  obs[2] = Math.log(Math.max(0, Math.min(y - radius * 0.5, 300)) + 1);
+  obs[3] = Math.log(Math.max(0, Math.min(MAP_HEIGHT - y - radius * 0.5, 300)) + 1);
 
-  // [6-20] 5 nearest fragments (from grid neighbourhood — same as bot logic)
+  // [4-7] self
+  obs[4] = Math.log(Math.abs(vx) + 1) * Math.sign(vx);
+  obs[5] = Math.log(Math.abs(vy) + 1) * Math.sign(vy);
+  obs[6] = Math.log(Math.abs(radius) + 1);
+  obs[7] = Math.floor((MAP_HEIGHT - y) / MAP_HEIGHT * 5);
+
+  // [8-27] 5 nearest fragments (dx, dy, area, dist)
   const nearFrags = engine.getFragmentsNear(x, y)
     .sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - ((b.x - x) ** 2 + (b.y - y) ** 2));
   for (let i = 0; i < 5 && i < nearFrags.length; i++) {
     const f = nearFrags[i];
-    const base = 6 + i * 3;
-    obs[base]     = (f.x - x) / 1200;
-    obs[base + 1] = (f.y - y) / 1200;
-    obs[base + 2] = f.area   / 200;
+    const base = 8 + i * 4;
+    obs[base]     = Math.log(Math.abs(f.x - x) + 1) * Math.sign(f.x - x);
+    obs[base + 1] = Math.log(Math.abs(f.y - y) + 1) * Math.sign(f.y - y);
+    obs[base + 2] = Math.log(f.area + 1);
+    obs[base + 3] = Math.log(Math.max(0, Math.hypot(f.x - x, f.y - y) - radius) + 1);
   }
 
-  // [21-32] 4 nearest other alive stones
+  // [28-51] 4 nearest other alive stones (dx, dy, radius_ratio, dvx, dvy, dist)
   const nearStones = [...engine.stones.values()]
     .filter(s => s.id !== stoneId && s.alive)
     .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
   for (let i = 0; i < 4 && i < nearStones.length; i++) {
     const s = nearStones[i];
-    const base = 21 + i * 3;
-    obs[base]     = (s.x - x)   / 1200;
-    obs[base + 1] = (s.y - y)   / 1200;
-    obs[base + 2] = s.radius / radius;
+    const base = 28 + i * 6;
+    obs[base]     = Math.log(Math.abs(s.x - x) + 1) * Math.sign(s.x - x);
+    obs[base + 1] = Math.log(Math.abs(s.y - y) + 1) * Math.sign(s.y - y);
+    obs[base + 2] = Math.log(s.radius / radius);
+    obs[base + 3] = Math.log(Math.abs(s.vx - vx) + 1) * Math.sign(s.vx - vx);
+    obs[base + 4] = Math.log(Math.abs(s.vy - vy) + 1) * Math.sign(s.vy - vy);
+    obs[base + 5] = Math.log(Math.max(0, Math.hypot(s.x - x, s.y - y) - s.radius - radius) + 1);
   }
 
-  // [33-41] 3 nearest gears
+  // [52-60] 3 nearest gears
   const nearGears = [...engine.gears]
     .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
   for (let i = 0; i < 3 && i < nearGears.length; i++) {
     const g = nearGears[i];
-    const base = 33 + i * 3;
-    obs[base]     = (g.x - x)            / 1200;
-    obs[base + 1] = (g.y - y)            / 1200;
-    obs[base + 2] = g.collisionRadius    / 1200;
+    const base = 52 + i * 3;
+    obs[base]     = Math.log(Math.abs(g.x - x) + 1) * Math.sign(g.x - x);
+    obs[base + 1] = Math.log(Math.abs(g.y - y) + 1) * Math.sign(g.y - y);
+    obs[base + 2] = Math.log(Math.max(0, radius + g.collisionRadius - Math.hypot(x - g.x, y - g.y)) + 1);
   }
 
   return obs;
@@ -149,16 +159,17 @@ const server = http.createServer((req, res) => {
           wasAlive.set(id, s ? s.alive : false);
         }
 
-        // Apply actions: [dir_x, dir_y] → mouseX/Y in a 200×200 virtual viewport
+        // Apply actions: [dir_x, dir_y, boost] → setInput + optional boost
         for (let i = 0; i < agentIds.length; i++) {
           const key = `agent_${i}`;
-          const act = actions[key] ?? [0, 0];
-          const [dx, dy] = act;
+          const act = actions[key] ?? [0, 0, 0];
+          const [dx, dy, boostVal] = act;
           engine.setInput(agentIds[i], VP / 2 + dx * 120, VP / 2 + dy * 120, VP, VP);
+          if (boostVal > 0.5) engine.boost(agentIds[i]);
         }
 
         // Random step 15–50 ms (mirrors real browser variance)
-        const deltaMs = 15 + Math.random() * 35;
+        const deltaMs = 15 + Math.random() * 3;
         engine.step(deltaMs);
 
         // Build response
