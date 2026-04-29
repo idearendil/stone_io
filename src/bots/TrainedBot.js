@@ -37,7 +37,7 @@ export class TrainedBot {
   // ---------------------------------------------------------------------------
 
   _buildObs(stone, engine) {
-    const obs = new Float32Array(61);
+    const obs = new Float32Array(62);
     const { MAP_WIDTH, MAP_HEIGHT } = engine.config;
     const { x, y, vx, vy, radius } = stone;
 
@@ -62,7 +62,7 @@ export class TrainedBot {
       obs[base]     = Math.log(Math.abs(f.x - x) + 1) * Math.sign(f.x - x);
       obs[base + 1] = Math.log(Math.abs(f.y - y) + 1) * Math.sign(f.y - y);
       obs[base + 2] = Math.log(f.area + 1);
-      obs[base + 3] = Math.log(Math.hypot(f.x - x, f.y - y) + 1);
+      obs[base + 3] = Math.log(Math.max(0, Math.hypot(f.x - x, f.y - y) - radius) + 1);
     }
 
     // [28-51] 4 nearest other alive stones (dx, dy, radius_ratio, dvx, dvy, dist)
@@ -88,8 +88,11 @@ export class TrainedBot {
       const base = 52 + i * 3;
       obs[base]     = Math.log(Math.abs(g.x - x) + 1) * Math.sign(g.x - x);
       obs[base + 1] = Math.log(Math.abs(g.y - y) + 1) * Math.sign(g.y - y);
-      obs[base + 2] = Math.log(Math.max(0, radius + g.collisionRadius - Math.hypot(x - g.x, y - g.y)) + 1);
+      obs[base + 2] = Math.log(Math.max(0, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius) + 1);
     }
+
+    // [61] spawn invincibility flag
+    obs[61] = engine._totalTime < stone.invincibleUntil ? 1.0 : 0.0;
 
     return obs;
   }

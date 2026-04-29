@@ -358,15 +358,15 @@ export class GameEngine {
     stone.alive = false;
     stone.respawnAt = this._totalTime + 2000;
     let fragment_spawned = 1;
-    const basic_radius = Math.sqrt(stone.radius * 0.7);
+    const basic_radius = stone.radius ** (3/4);
     const target = Math.ceil(stone.radius);
     let attempts = 0;
-    while (fragment_spawned <= stone.radius) {
+    while (fragment_spawned <= Math.sqrt(stone.radius * 0.8)) {
       if (++attempts > target * 20) break;
 
       const angle = Math.random() * 2 * Math.PI;
       const speed = 1 + Math.random() * 2;
-      const radius = basic_radius + (Math.random() * 2 - 1) * basic_radius * 0.2;
+      const radius = basic_radius + basic_radius * 0.2 * (Math.random() * 2 - 1);
       const fx = stone.x + Math.cos(angle) * stone.radius;
       const fy = stone.y + Math.sin(angle) * stone.radius;
 

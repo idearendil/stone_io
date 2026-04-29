@@ -6,7 +6,7 @@ const PORT       = Number(process.env.PORT       ?? 7777);
 const NUM_AGENTS = Number(process.env.NUM_AGENTS  ?? 1);
 const NUM_BOTS   = Number(process.env.NUM_BOTS    ?? 0);
 
-const OBS_SIZE = 61;
+const OBS_SIZE = 62;
 
 // Mutable config shared with engine (engine stores the same reference)
 const config = { ...CONFIG, ZONES: CONFIG.ZONES };
@@ -17,6 +17,8 @@ let engine = null;
 let agentIds = [];
 /** stoneId -> area at start of current step */
 const prevAreas = new Map();
+/** stoneId -> {dx, dy} direction from previous step */
+const prevDirs = new Map();
 
 // ---------------------------------------------------------------------------
 // Observation builder
@@ -79,8 +81,11 @@ function buildObs(stoneId) {
     const base = 52 + i * 3;
     obs[base]     = Math.log(Math.abs(g.x - x) + 1) * Math.sign(g.x - x);
     obs[base + 1] = Math.log(Math.abs(g.y - y) + 1) * Math.sign(g.y - y);
-    obs[base + 2] = Math.log(Math.max(0, radius + g.collisionRadius - Math.hypot(x - g.x, y - g.y)) + 1);
+    obs[base + 2] = Math.log(Math.max(0, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius) + 1);
   }
+
+  // [61] spawn invincibility flag
+  obs[61] = engine._totalTime < stone.invincibleUntil ? 1.0 : 0.0;
 
   return obs;
 }
@@ -120,6 +125,7 @@ function resetEngine() {
   for (const id of agentIds) {
     const stone = engine.stones.get(id);
     prevAreas.set(id, stone ? stone.area : 0);
+    prevDirs.set(id, { dx: 0, dy: 0 });
   }
 }
 
@@ -160,10 +166,12 @@ const server = http.createServer((req, res) => {
         }
 
         // Apply actions: [dir_x, dir_y, boost] → setInput + optional boost
+        const currDirs = new Map();
         for (let i = 0; i < agentIds.length; i++) {
           const key = `agent_${i}`;
           const act = actions[key] ?? [0, 0, 0];
           const [dx, dy, boostVal] = act;
+          currDirs.set(agentIds[i], { dx, dy });
           engine.setInput(agentIds[i], VP / 2 + dx * 120, VP / 2 + dy * 120, VP, VP);
           if (boostVal > 0.5) engine.boost(agentIds[i]);
         }
@@ -189,9 +197,22 @@ const server = http.createServer((req, res) => {
 
           let reward;
           if (died) {
-            reward = -prevArea * 0.1;
+            reward = -10.0;
           } else if (alive) {
-            reward = (currArea - prevArea) * 0.1;
+            reward = (currArea - prevArea) * 0.03;
+
+            // Penalty: sharp direction reversal
+            const prev = prevDirs.get(id) ?? { dx: 0, dy: 0 };
+            const curr = currDirs.get(id) ?? { dx: 0, dy: 0 };
+            const prevMag = Math.hypot(prev.dx, prev.dy);
+            const currMag = Math.hypot(curr.dx, curr.dy);
+            if (prevMag > 0.3 && currMag > 0.3) {
+              const cosine = (prev.dx * curr.dx + prev.dy * curr.dy) / (prevMag * currMag);
+              if (cosine < -0.5) reward -= 0.1;
+            }
+
+            // Penalty: idle (nearly stationary)
+            if (Math.hypot(stone.vx, stone.vy) < 1.0) reward -= 0.05;
           } else {
             reward = 0.0;
           }
@@ -202,6 +223,7 @@ const server = http.createServer((req, res) => {
           truncated[key]    = false;
 
           prevAreas.set(id, alive ? currArea : 0);
+          prevDirs.set(id, alive ? (currDirs.get(id) ?? { dx: 0, dy: 0 }) : { dx: 0, dy: 0 });
         }
 
         res.writeHead(200);

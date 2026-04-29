@@ -34,7 +34,7 @@ from network import ActorCritic
 # ------------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------------
-OBS_DIM    = 61
+OBS_DIM    = 62
 ACT_DIM    = 3
 BASE_PORT  = 8000
 POOL_SIZE  = 5
@@ -234,14 +234,11 @@ def train(args: argparse.Namespace) -> None:
             # Compute opponent actions — one batch forward pass per unique pool model
             opp_actions: dict[tuple[int, int], np.ndarray] = {}
             for idx, group in opp_groups.items():
-                if idx is None:
-                    for (e, i) in group:
-                        opp_actions[(e, i)] = np.random.uniform(-1, 1, ACT_DIM).astype(np.float32)
-                else:
-                    obs_batch = np.stack([obs_dicts[e][f'agent_{i}'] for (e, i) in group])
-                    batch_acts = _pool_act_batch(obs_batch, pool[idx])
-                    for j, (e, i) in enumerate(group):
-                        opp_actions[(e, i)] = batch_acts[j]
+                obs_batch = np.stack([obs_dicts[e][f'agent_{i}'] for (e, i) in group])
+                model = agent.model if idx is None else pool[idx]
+                batch_acts = _pool_act_batch(obs_batch, model)
+                for j, (e, i) in enumerate(group):
+                    opp_actions[(e, i)] = batch_acts[j]
 
             # Build full action dicts (self + opponents)
             env_action_dicts = []
@@ -314,13 +311,13 @@ def train(args: argparse.Namespace) -> None:
         all_radii = []
         for radii_list in vec_env.get_radii():
             all_radii.extend(radii_list)
-        clamped = [min(r, 400.0) for r in all_radii]
+        clamped = [min(r, 150.0) for r in all_radii]
 
         fig, ax = plt.subplots(figsize=(8, 4))
-        ax.hist(clamped, bins=40, range=(0, 400), color='steelblue', edgecolor='black')
+        ax.hist(clamped, bins=40, range=(0, 150), color='steelblue', edgecolor='black')
         ax.set_xlabel('Radius')
         ax.set_ylabel('Count')
-        ax.set_xlim(0, 400)
+        ax.set_xlim(0, 150)
         ax.set_title(f'Stone Radius Distribution (update {update_count})')
         hist_path = os.path.join(args.checkpoint_dir, '_radius_hist.png')
         fig.savefig(hist_path, dpi=80, bbox_inches='tight')
@@ -387,7 +384,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description='PPO self-play training for Stone.io')
     p.add_argument('--n-agents',        type=int,   default=40)
     p.add_argument('--n-opponents',     type=int,   default=60)
-    p.add_argument('--total-steps',     type=int,   default=10_000_000)
+    p.add_argument('--total-steps',     type=int,   default=20_000_000)
     p.add_argument('--rollout-steps',   type=int,   default=2500)
     p.add_argument('--n-envs',          type=int,   default=2)
     p.add_argument('--checkpoint-dir',  type=str,   default='checkpoints')
