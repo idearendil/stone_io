@@ -19,6 +19,9 @@ let agentIds = [];
 const prevAreas = new Map();
 /** stoneId -> {dx, dy} direction from previous step */
 const prevDirs = new Map();
+/** stoneId -> obs[] rolling buffer for 15-step perception delay */
+const obsBuffers = new Map();
+const OBS_DELAY = 8;
 
 // ---------------------------------------------------------------------------
 // Observation builder
@@ -122,10 +125,13 @@ function resetEngine() {
   );
   for (let i = 0; i < initCount; i++) engine._spawnInitialFragments();
 
+  obsBuffers.clear();
   for (const id of agentIds) {
     const stone = engine.stones.get(id);
     prevAreas.set(id, stone ? stone.area : 0);
     prevDirs.set(id, { dx: 0, dy: 0 });
+    const initObs = buildObs(id);
+    obsBuffers.set(id, Array.from({ length: OBS_DELAY }, () => initObs.slice()));
   }
 }
 
@@ -199,25 +205,26 @@ const server = http.createServer((req, res) => {
           if (died) {
             reward = -10.0;
           } else if (alive) {
-            reward = (currArea - prevArea) * 0.03;
+            reward = (currArea - prevArea) * 0.005;
 
-            // Penalty: sharp direction reversal
+            // Penalty: direction change proportional to Euclidean distance between actions
             const prev = prevDirs.get(id) ?? { dx: 0, dy: 0 };
             const curr = currDirs.get(id) ?? { dx: 0, dy: 0 };
-            const prevMag = Math.hypot(prev.dx, prev.dy);
-            const currMag = Math.hypot(curr.dx, curr.dy);
-            if (prevMag > 0.3 && currMag > 0.3) {
-              const cosine = (prev.dx * curr.dx + prev.dy * curr.dy) / (prevMag * currMag);
-              if (cosine < -0.5) reward -= 0.1;
-            }
+            const dirDist = Math.hypot(curr.dx - prev.dx, curr.dy - prev.dy);
+            reward -= dirDist * 0.000;
 
             // Penalty: idle (nearly stationary)
-            if (Math.hypot(stone.vx, stone.vy) < 1.0) reward -= 0.05;
+            if (Math.hypot(stone.vx, stone.vy) < 1.0) reward -= 0.00;
           } else {
             reward = 0.0;
           }
 
-          observations[key] = buildObs(id);
+          if (died) {
+            obsBuffers.set(id, Array.from({ length: OBS_DELAY }, () => new Array(OBS_SIZE).fill(0)));
+          }
+          const buf = obsBuffers.get(id) ?? [];
+          buf.push(buildObs(id));
+          observations[key] = buf.shift();
           rewards[key]      = Math.max(-10, Math.min(10, reward));
           terminated[key]   = died;
           truncated[key]    = false;

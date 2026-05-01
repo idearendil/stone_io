@@ -8,13 +8,21 @@ export class TrainedBot {
   constructor(stoneId, weightsJson) {
     this.stoneId = stoneId;
     this._layers = weightsJson.layers;
+    this._obsBuffer = [];
+    this._DELAY = 8;
   }
 
   update(deltaMs, state, engine) {
     const stone = engine.stones.get(this.stoneId);
-    if (!stone || !stone.alive) return;
+    if (!stone || !stone.alive) {
+      this._obsBuffer = [];
+      return;
+    }
 
-    const obs = this._buildObs(stone, engine);
+    this._obsBuffer.push(this._buildObs(stone, engine));
+    if (this._obsBuffer.length <= this._DELAY) return;
+
+    const obs = this._obsBuffer.shift();  // observation from 15 frames ago
     const raw = this._forward(obs);   // raw linear output: [dx_raw, dy_raw, boost_raw]
     const dx    = Math.tanh(raw[0]);
     const dy    = Math.tanh(raw[1]);

@@ -384,7 +384,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description='PPO self-play training for Stone.io')
     p.add_argument('--n-agents',        type=int,   default=40)
     p.add_argument('--n-opponents',     type=int,   default=60)
-    p.add_argument('--total-steps',     type=int,   default=20_000_000)
+    p.add_argument('--total-steps',     type=int,   default=10_000_000)
     p.add_argument('--rollout-steps',   type=int,   default=2500)
     p.add_argument('--n-envs',          type=int,   default=2)
     p.add_argument('--checkpoint-dir',  type=str,   default='checkpoints')
