@@ -181,6 +181,9 @@ def train(args: argparse.Namespace) -> None:
     finished_rewards: list[float] = []
     finished_lengths: list[int]   = []
 
+    # exclude cols for obs
+    exclude_cols = np.r_[65:71, 74:80, 83:89]
+
     wandb.init(
         entity='leetm2021-postech',
         project='stone_io',
@@ -216,11 +219,9 @@ def train(args: argparse.Namespace) -> None:
 
             # Batch all self-agent obs across envs: (E*A, OBS_DIM)
             self_obs_batch = np.stack([
-                obs_dicts[e][f'agent_{i}']
+                np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=1)
                 for e in range(E) for i in range(A)
             ])
-            exclude_cols = np.r_[65:71, 74:80, 83:89]
-            self_obs_batch = np.delete(self_obs_batch, exclude_cols, axis=1)
             all_actions, all_log_probs, all_values = agent.act_batch(self_obs_batch)
             # Reshape to (E, A, ...)
             all_actions   = all_actions.reshape(E, A, ACT_DIM)
@@ -238,9 +239,10 @@ def train(args: argparse.Namespace) -> None:
             # Compute opponent actions — one batch forward pass per unique pool model
             opp_actions: dict[tuple[int, int], np.ndarray] = {}
             for idx, group in opp_groups.items():
-                obs_batch = np.stack([obs_dicts[e][f'agent_{i}'] for (e, i) in group])
-                exclude_cols = np.r_[65:71, 74:80, 83:89]
-                obs_batch = np.delete(obs_batch, exclude_cols, axis=1)
+                obs_batch = np.stack([
+                    np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=1)
+                    for (e, i) in group
+                ])
                 model = agent.model if idx is None else pool[idx]
                 batch_acts = _pool_act_batch(obs_batch, model)
                 for j, (e, i) in enumerate(group):
@@ -291,7 +293,7 @@ def train(args: argparse.Namespace) -> None:
 
         # ---- bootstrap last values ----
         last_obs_batch = np.stack([
-            obs_dicts[e][f'agent_{i}']
+            np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=1)
             for e in range(E) for i in range(A)
         ])
         _, _, last_vals = agent.act_batch(last_obs_batch)
