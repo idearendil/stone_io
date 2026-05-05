@@ -10,7 +10,7 @@ def _ortho(layer, gain: float = 1.0) -> nn.Linear:
 
 
 class ActorCritic(nn.Module):
-    def __init__(self, obs_dim: int = 86, act_dim: int = 3):
+    def __init__(self, obs_dim: int = 71, act_dim: int = 3):
         super().__init__()
         self.obs_dim = obs_dim
         self.act_dim = act_dim  # act_dim-1 continuous (movement) + 1 discrete (boost)

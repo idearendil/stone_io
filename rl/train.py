@@ -34,7 +34,7 @@ from network import ActorCritic
 # ------------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------------
-OBS_DIM    = 86
+OBS_DIM    = 71
 ACT_DIM    = 3
 BASE_PORT  = 8000
 POOL_SIZE  = 5
@@ -219,6 +219,8 @@ def train(args: argparse.Namespace) -> None:
                 obs_dicts[e][f'agent_{i}']
                 for e in range(E) for i in range(A)
             ])
+            exclude_cols = np.r_[65:71, 74:80, 83:89]
+            self_obs_batch = np.delete(self_obs_batch, exclude_cols, axis=1)
             all_actions, all_log_probs, all_values = agent.act_batch(self_obs_batch)
             # Reshape to (E, A, ...)
             all_actions   = all_actions.reshape(E, A, ACT_DIM)
@@ -237,6 +239,8 @@ def train(args: argparse.Namespace) -> None:
             opp_actions: dict[tuple[int, int], np.ndarray] = {}
             for idx, group in opp_groups.items():
                 obs_batch = np.stack([obs_dicts[e][f'agent_{i}'] for (e, i) in group])
+                exclude_cols = np.r_[65:71, 74:80, 83:89]
+                obs_batch = np.delete(obs_batch, exclude_cols, axis=1)
                 model = agent.model if idx is None else pool[idx]
                 batch_acts = _pool_act_batch(obs_batch, model)
                 for j, (e, i) in enumerate(group):
@@ -252,24 +256,35 @@ def train(args: argparse.Namespace) -> None:
                     acts[f'agent_{i}'] = opp_actions[(e, i)]
                 env_action_dicts.append(acts)
 
-            # Step all envs
-            step_results = vec_env.step(env_action_dicts)
+            # Step all envs for ACTION_REPEAT
             new_obs_dicts = []
-            for e, (obs_d, rew_d, term_d, trunc_d, _) in enumerate(step_results):
-                new_obs_dicts.append(obs_d)
-                for i in range(A):
-                    key = f'agent_{i}'
-                    r   = float(rew_d[key])
-                    d   = bool(term_d[key])
-                    buf_rewards[step, e, i] = r
-                    buf_dones[step, e, i]   = float(d)
-                    ep_rewards[e, i] += r
-                    ep_lengths[e, i] += 1
-                    if d:
-                        finished_rewards.append(float(ep_rewards[e, i]))
-                        finished_lengths.append(int(ep_lengths[e, i]))
-                        ep_rewards[e, i] = 0.0
-                        ep_lengths[e, i] = 0
+            cum_rewards = np.zeros((E, A), dtype=np.float32)
+            cum_dones = np.zeros((E, A), dtype=np.float32)
+            for inner_repeat in range(ACTION_REPEAT):
+                step_results = vec_env.step(env_action_dicts)
+                for e, (obs_d, rew_d, term_d, trunc_d, _) in enumerate(step_results):
+
+                    if inner_repeat == ACTION_REPEAT - 1:
+                        new_obs_dicts.append(obs_d)
+
+                    for i in range(A):
+                        key = f'agent_{i}'
+                        r   = float(rew_d[key])
+                        d   = bool(term_d[key])
+                        cum_rewards[e, i] += r
+                        cum_dones[e, i] += float(d)
+
+                        if inner_repeat == ACTION_REPEAT - 1:
+                            buf_rewards[step, e, i] = cum_rewards[e, i]
+                            buf_dones[step, e, i] = float(cum_dones[e, i] > 0.5)
+                        
+                        ep_rewards[e, i] += r
+                        ep_lengths[e, i] += 1
+                        if d:
+                            finished_rewards.append(float(ep_rewards[e, i]))
+                            finished_lengths.append(int(ep_lengths[e, i]))
+                            ep_rewards[e, i] = 0.0
+                            ep_lengths[e, i] = 0
 
             obs_dicts = new_obs_dicts
             total_steps_done += A * E
