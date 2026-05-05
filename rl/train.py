@@ -194,7 +194,7 @@ def train(args: argparse.Namespace) -> None:
     vec_env = ParallelEnv(n_envs, env_kwargs_list)
     obs_dicts = vec_env.reset()
     for e in range(E):
-        for i in range(A):
+        for i in range(n_total):
             obs_dicts[e][f'agent_{i}'] = np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
     print(f'Envs ready. n_self={n_self}  n_opp={n_opp}  n_envs={n_envs}')
 
@@ -270,7 +270,7 @@ def train(args: argparse.Namespace) -> None:
                 for e, (obs_d, rew_d, term_d, trunc_d, _) in enumerate(step_results):
 
                     if inner_repeat == ACTION_REPEAT - 1:
-                        for i in range(A):
+                        for i in range(n_total):
                             obs_d[f'agent_{i}'] = np.delete(obs_d[f'agent_{i}'], exclude_cols, axis=0)
                         new_obs_dicts.append(obs_d)
 
