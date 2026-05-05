@@ -193,6 +193,9 @@ def train(args: argparse.Namespace) -> None:
     print('Launching environments...')
     vec_env = ParallelEnv(n_envs, env_kwargs_list)
     obs_dicts = vec_env.reset()
+    for e in range(E):
+        for i in range(A):
+            obs_dicts[e][f'agent_{i}'] = np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
     print(f'Envs ready. n_self={n_self}  n_opp={n_opp}  n_envs={n_envs}')
 
     total_steps_done = 0
@@ -219,7 +222,7 @@ def train(args: argparse.Namespace) -> None:
 
             # Batch all self-agent obs across envs: (E*A, OBS_DIM)
             self_obs_batch = np.stack([
-                np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
+                obs_dicts[e][f'agent_{i}']
                 for e in range(E) for i in range(A)
             ])
             all_actions, all_log_probs, all_values = agent.act_batch(self_obs_batch)
@@ -240,7 +243,7 @@ def train(args: argparse.Namespace) -> None:
             opp_actions: dict[tuple[int, int], np.ndarray] = {}
             for idx, group in opp_groups.items():
                 obs_batch = np.stack([
-                    np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
+                    obs_dicts[e][f'agent_{i}']
                     for (e, i) in group
                 ])
                 model = agent.model if idx is None else pool[idx]
@@ -267,6 +270,8 @@ def train(args: argparse.Namespace) -> None:
                 for e, (obs_d, rew_d, term_d, trunc_d, _) in enumerate(step_results):
 
                     if inner_repeat == ACTION_REPEAT - 1:
+                        for i in range(A):
+                            obs_d[f'agent_{i}'] = np.delete(obs_d[f'agent_{i}'], exclude_cols, axis=0)
                         new_obs_dicts.append(obs_d)
 
                     for i in range(A):
@@ -293,7 +298,7 @@ def train(args: argparse.Namespace) -> None:
 
         # ---- bootstrap last values ----
         last_obs_batch = np.stack([
-            np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
+            obs_dicts[e][f'agent_{i}']
             for e in range(E) for i in range(A)
         ])
         _, _, last_vals = agent.act_batch(last_obs_batch)
