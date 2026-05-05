@@ -9,8 +9,10 @@ export class TrainedBot {
     this.stoneId = stoneId;
     this._layers = weightsJson.layers;
     this._obsBuffer = [];
-    this._actBuffer = Array.from({ length: 8 }, () => [0, 0, 0]);
-    this._DELAY = 8;
+    this._actBuffer = Array.from({ length: 3 }, () => [0, 0, 0]);
+    this._DELAY = 3;
+    this._ACTION_REPEAT = 3;
+    this._AR_counter = 0;
   }
 
   update(deltaMs, state, engine) {
@@ -20,32 +22,49 @@ export class TrainedBot {
       this._actBuffer = Array.from({ length: this._DELAY }, () => [0, 0, 0]);
       return;
     }
+    if (this._AR_counter > 0) {
+      const dx = this._actBuffer.at(-1)[0];
+      const dy = this._actBuffer.at(-1)[1];
+      const boost = this._actBuffer.at(-1)[2];
+      const VP = 200;
+      engine.setInput(
+        this.stoneId,
+        VP / 2 + dx * 120,
+        VP / 2 + dy * 120,
+        VP, VP,
+      );
+      if (boost > 0.5) engine.boost(this.stoneId);
+    }
+    else {
+      this._obsBuffer.push(this._buildObs(stone, engine));
+      if (this._obsBuffer.length <= this._DELAY) return;
 
-    this._obsBuffer.push(this._buildObs(stone, engine));
-    if (this._obsBuffer.length <= this._DELAY) return;
+      const delayedObs = this._obsBuffer.shift();
+      const actFlat = this._actBuffer.flat();
+      const fullObs = new Float32Array(delayedObs.length + actFlat.length);
+      fullObs.set(delayedObs);
+      fullObs.set(actFlat, delayedObs.length);
 
-    const delayedObs = this._obsBuffer.shift();
-    const actFlat = this._actBuffer.flat();
-    const fullObs = new Float32Array(delayedObs.length + actFlat.length);
-    fullObs.set(delayedObs);
-    fullObs.set(actFlat, delayedObs.length);
+      const raw = this._forward(fullObs);
+      const dx    = Math.tanh(raw[0]);
+      const dy    = Math.tanh(raw[1]);
+      const boost = 1 / (1 + Math.exp(-raw[2])) > 0.5;
 
-    const raw = this._forward(fullObs);
-    const dx    = Math.tanh(raw[0]);
-    const dy    = Math.tanh(raw[1]);
-    const boost = 1 / (1 + Math.exp(-raw[2])) > 0.5;
+      this._actBuffer.push([dx, dy, boost ? 1.0 : 0.0]);
+      this._actBuffer.shift();
 
-    this._actBuffer.push([dx, dy, boost ? 1.0 : 0.0]);
-    this._actBuffer.shift();
-
-    const VP = 200;
-    engine.setInput(
-      this.stoneId,
-      VP / 2 + dx * 120,
-      VP / 2 + dy * 120,
-      VP, VP,
-    );
-    if (boost) engine.boost(this.stoneId);
+      const VP = 200;
+      engine.setInput(
+        this.stoneId,
+        VP / 2 + dx * 120,
+        VP / 2 + dy * 120,
+        VP, VP,
+      );
+      if (boost) engine.boost(this.stoneId);
+    }
+    
+    this._AR_counter += 1;
+    if (this._AR_counter >= this._ACTION_REPEAT)  this._AR_counter = 0;
   }
 
   // ---------------------------------------------------------------------------

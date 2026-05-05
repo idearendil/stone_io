@@ -19,11 +19,12 @@ let agentIds = [];
 const prevAreas = new Map();
 /** stoneId -> {dx, dy} direction from previous step */
 const prevDirs = new Map();
-/** stoneId -> obs[] rolling buffer for 8-step perception delay */
+/** stoneId -> obs[] rolling buffer for {OBS_DELAYxACTION_REPEAT}-step perception delay */
 const obsBuffers = new Map();
-/** stoneId -> [[dx,dy,boost]×OBS_DELAY] rolling action history */
+/** stoneId -> [[dx,dy,boost]×OBS_DELAYxACTION_REPEAT] rolling action history */
 const actionBuffers = new Map();
-const OBS_DELAY = 8;
+const OBS_DELAY = 3;
+const ACTION_REPEAT = 3;
 
 // ---------------------------------------------------------------------------
 // Observation builder
@@ -136,8 +137,8 @@ function resetEngine() {
     prevAreas.set(id, stone ? stone.area : 0);
     prevDirs.set(id, { dx: 0, dy: 0 });
     const initObs = buildObs(id);
-    obsBuffers.set(id, Array.from({ length: OBS_DELAY }, () => initObs.slice()));
-    actionBuffers.set(id, Array.from({ length: OBS_DELAY }, () => [0, 0, 0]));
+    obsBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => initObs.slice()));
+    actionBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => [0, 0, 0]));
   }
 }
 
@@ -191,7 +192,7 @@ const server = http.createServer((req, res) => {
           if (boostVal > 0.5) engine.boost(agentIds[i]);
         }
 
-        // Random step 15–50 ms (mirrors real browser variance)
+        // Random step 15–18 ms (mirrors real browser variance)
         const deltaMs = 15 + Math.random() * 3;
         engine.step(deltaMs);
 
@@ -229,8 +230,8 @@ const server = http.createServer((req, res) => {
           }
 
           if (died) {
-            obsBuffers.set(id, Array.from({ length: OBS_DELAY }, () => new Array(OBS_SIZE).fill(0)));
-            actionBuffers.set(id, Array.from({ length: OBS_DELAY }, () => [0, 0, 0]));
+            obsBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => new Array(OBS_SIZE).fill(0)));
+            actionBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => [0, 0, 0]));
           }
           const buf = obsBuffers.get(id) ?? [];
           buf.push(buildObs(id));

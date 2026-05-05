@@ -40,6 +40,7 @@ BASE_PORT  = 8000
 POOL_SIZE  = 5
 POOL_EVERY = 5   # updates
 CKPT_EVERY = 10  # updates
+ACTION_REPEAT = 3
 
 
 # ------------------------------------------------------------------
@@ -212,6 +213,7 @@ def train(args: argparse.Namespace) -> None:
             opp_groups.setdefault(idx, []).append((e, i))
 
         for step in range(T):
+
             # Batch all self-agent obs across envs: (E*A, OBS_DIM)
             self_obs_batch = np.stack([
                 obs_dicts[e][f'agent_{i}']
@@ -382,7 +384,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--n-agents',        type=int,   default=40)
     p.add_argument('--n-opponents',     type=int,   default=60)
     p.add_argument('--total-steps',     type=int,   default=80_000_000)
-    p.add_argument('--rollout-steps',   type=int,   default=2500)
+    p.add_argument('--rollout-steps',   type=int,   default=1000)
     p.add_argument('--n-envs',          type=int,   default=2)
     p.add_argument('--checkpoint-dir',  type=str,   default='checkpoints')
     p.add_argument('--log-interval',    type=int,   default=10)

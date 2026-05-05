@@ -243,8 +243,8 @@ export class GameEngine {
         stone.vx *= this.config.MAX_SPEED / Math.hypot(stone.vx, stone.vy);
         stone.vy *= this.config.MAX_SPEED / Math.hypot(stone.vx, stone.vy);
       }
-      stone.x += stone.vx;
-      stone.y += stone.vy;
+      stone.x += (stone.vx * deltaMs / 16);
+      stone.y += (stone.vy * deltaMs / 16);
 
       // Wall collision
       if (stone.x - stone.radius * 0.5 < 0) {
