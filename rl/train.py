@@ -34,7 +34,7 @@ from network import ActorCritic
 # ------------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------------
-OBS_DIM    = 62
+OBS_DIM    = 86
 ACT_DIM    = 3
 BASE_PORT  = 8000
 POOL_SIZE  = 5
@@ -349,9 +349,6 @@ def train(args: argparse.Namespace) -> None:
             agent.save(ckpt_path)
             print(f'  [checkpoint] saved → {ckpt_path}')
 
-        # Reset all envs to a clean initial state before next rollout
-        obs_dicts = vec_env.reset()
-
         # ---- logging ----
         if update_count % args.log_interval == 0:
             elapsed = time.time() - t_start
@@ -384,7 +381,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description='PPO self-play training for Stone.io')
     p.add_argument('--n-agents',        type=int,   default=40)
     p.add_argument('--n-opponents',     type=int,   default=60)
-    p.add_argument('--total-steps',     type=int,   default=10_000_000)
+    p.add_argument('--total-steps',     type=int,   default=80_000_000)
     p.add_argument('--rollout-steps',   type=int,   default=2500)
     p.add_argument('--n-envs',          type=int,   default=2)
     p.add_argument('--checkpoint-dir',  type=str,   default='checkpoints')

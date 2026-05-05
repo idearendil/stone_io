@@ -5,7 +5,7 @@ import gymnasium as gym
 
 from .bridge import HeadlessBridge
 
-OBS_SIZE = 62
+OBS_SIZE = 86
 
 # Auto-increment port so multiple envs in the same process don't collide
 _next_port: list[int] = [7777]

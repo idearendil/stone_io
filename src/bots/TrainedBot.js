@@ -9,6 +9,7 @@ export class TrainedBot {
     this.stoneId = stoneId;
     this._layers = weightsJson.layers;
     this._obsBuffer = [];
+    this._actBuffer = Array.from({ length: 8 }, () => [0, 0, 0]);
     this._DELAY = 8;
   }
 
@@ -16,17 +17,26 @@ export class TrainedBot {
     const stone = engine.stones.get(this.stoneId);
     if (!stone || !stone.alive) {
       this._obsBuffer = [];
+      this._actBuffer = Array.from({ length: this._DELAY }, () => [0, 0, 0]);
       return;
     }
 
     this._obsBuffer.push(this._buildObs(stone, engine));
     if (this._obsBuffer.length <= this._DELAY) return;
 
-    const obs = this._obsBuffer.shift();  // observation from 15 frames ago
-    const raw = this._forward(obs);   // raw linear output: [dx_raw, dy_raw, boost_raw]
+    const delayedObs = this._obsBuffer.shift();
+    const actFlat = this._actBuffer.flat();
+    const fullObs = new Float32Array(delayedObs.length + actFlat.length);
+    fullObs.set(delayedObs);
+    fullObs.set(actFlat, delayedObs.length);
+
+    const raw = this._forward(fullObs);
     const dx    = Math.tanh(raw[0]);
     const dy    = Math.tanh(raw[1]);
     const boost = 1 / (1 + Math.exp(-raw[2])) > 0.5;
+
+    this._actBuffer.push([dx, dy, boost ? 1.0 : 0.0]);
+    this._actBuffer.shift();
 
     const VP = 200;
     engine.setInput(

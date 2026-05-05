@@ -97,7 +97,7 @@ class RolloutBuffer:
 class PPOAgent:
     def __init__(
         self,
-        obs_dim:     int   = 62,
+        obs_dim:     int   = 86,
         act_dim:     int   = 3,
         lr:          float = LR,
         total_steps: int   = 50_000_000,
