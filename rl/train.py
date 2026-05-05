@@ -219,7 +219,7 @@ def train(args: argparse.Namespace) -> None:
 
             # Batch all self-agent obs across envs: (E*A, OBS_DIM)
             self_obs_batch = np.stack([
-                np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=1)
+                np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
                 for e in range(E) for i in range(A)
             ])
             all_actions, all_log_probs, all_values = agent.act_batch(self_obs_batch)
@@ -240,7 +240,7 @@ def train(args: argparse.Namespace) -> None:
             opp_actions: dict[tuple[int, int], np.ndarray] = {}
             for idx, group in opp_groups.items():
                 obs_batch = np.stack([
-                    np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=1)
+                    np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
                     for (e, i) in group
                 ])
                 model = agent.model if idx is None else pool[idx]
@@ -293,7 +293,7 @@ def train(args: argparse.Namespace) -> None:
 
         # ---- bootstrap last values ----
         last_obs_batch = np.stack([
-            np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=1)
+            np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
             for e in range(E) for i in range(A)
         ])
         _, _, last_vals = agent.act_batch(last_obs_batch)
