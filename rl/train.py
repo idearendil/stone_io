@@ -294,7 +294,7 @@ def train(args: argparse.Namespace) -> None:
                             ep_lengths[e, i] = 0
 
             obs_dicts = new_obs_dicts
-            total_steps_done += A * E
+            total_steps_done += A * E * ACTION_REPEAT
 
         # ---- bootstrap last values ----
         last_obs_batch = np.stack([

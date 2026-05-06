@@ -221,7 +221,7 @@ const server = http.createServer((req, res) => {
             const prev = prevDirs.get(id) ?? { dx: 0, dy: 0 };
             const curr = currDirs.get(id) ?? { dx: 0, dy: 0 };
             const dirDist = Math.hypot(curr.dx - prev.dx, curr.dy - prev.dy);
-            reward -= dirDist * 0.002;
+            reward -= dirDist * 0.005;
 
             // Penalty: idle (nearly stationary)
             if (Math.hypot(stone.vx, stone.vy) < 1.0) reward -= 0.01;
