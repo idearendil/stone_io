@@ -162,7 +162,7 @@ def train(args: argparse.Namespace) -> None:
         total_steps=args.total_steps,
     )
     # Inform scheduler about rollout size for LR decay
-    agent._rollout_size = args.rollout_steps * n_envs * n_self
+    agent._rollout_size = args.rollout_steps * n_envs * n_self * ACTION_REPEAT
 
     pool: list[ActorCritic] = []
 

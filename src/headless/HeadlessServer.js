@@ -215,13 +215,13 @@ const server = http.createServer((req, res) => {
           if (died) {
             reward = -10.0;
           } else if (alive) {
-            reward = Math.sign(currArea - prevArea) * Math.log(Math.abs(currArea - prevArea) + 1) * 0.6;
+            reward = Math.sign(currArea - prevArea) * Math.log(Math.abs(currArea - prevArea) + 1) * 0.8;
 
             // Penalty: direction change proportional to Euclidean distance between actions
             const prev = prevDirs.get(id) ?? { dx: 0, dy: 0 };
             const curr = currDirs.get(id) ?? { dx: 0, dy: 0 };
             const dirDist = Math.hypot(curr.dx - prev.dx, curr.dy - prev.dy);
-            reward -= dirDist * 0.005;
+            reward -= dirDist * 0.01;
 
             // Penalty: idle (nearly stationary)
             if (Math.hypot(stone.vx, stone.vy) < 1.0) reward -= 0.01;
