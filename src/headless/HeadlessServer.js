@@ -138,7 +138,7 @@ function resetEngine() {
     prevDirs.set(id, { dx: 0, dy: 0 });
     const initObs = buildObs(id);
     obsBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => initObs.slice()));
-    actionBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => [0, 0, 0]));
+    actionBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => [0, 0, 0, 0]));
   }
 }
 
@@ -178,17 +178,21 @@ const server = http.createServer((req, res) => {
           wasAlive.set(id, s ? s.alive : false);
         }
 
-        // Apply actions: [dir_x, dir_y, boost] → setInput + optional boost
+        // Apply actions: [x, y, power, boost] → normalize (x,y) to unit dir, scale by power
         const currDirs = new Map();
         for (let i = 0; i < agentIds.length; i++) {
           const key = `agent_${i}`;
-          const act = actions[key] ?? [0, 0, 0];
-          const [dx, dy, boostVal] = act;
-          currDirs.set(agentIds[i], { dx, dy });
+          const act = actions[key] ?? [0, 0, 0, 0];
+          const [xSamp, ySamp, powerSamp, boostVal] = act;
+          const mag = Math.hypot(xSamp, ySamp);
+          const ndx = mag > 1e-6 ? xSamp / mag : 0;
+          const ndy = mag > 1e-6 ? ySamp / mag : 0;
+          const power = Math.max(0, Math.min(1, powerSamp));
+          currDirs.set(agentIds[i], { dx: ndx, dy: ndy });
           const abuf = actionBuffers.get(agentIds[i]) ?? [];
-          abuf.push([dx, dy, boostVal > 0.5 ? 1.0 : 0.0]);
+          abuf.push([ndx, ndy, power, boostVal > 0.5 ? 1.0 : 0.0]);
           abuf.shift();
-          engine.setInput(agentIds[i], VP / 2 + dx * 120, VP / 2 + dy * 120, VP, VP);
+          engine.setInput(agentIds[i], VP / 2 + ndx * 120 * power, VP / 2 + ndy * 120 * power, VP, VP);
           if (boostVal > 0.5) engine.boost(agentIds[i]);
         }
 
@@ -224,14 +228,15 @@ const server = http.createServer((req, res) => {
             reward -= dirDist * 0.01;
 
             // Penalty: idle (nearly stationary)
-            if (Math.hypot(stone.vx, stone.vy) < 1.0) reward -= 0.01;
+            const velocity = Math.hypot(stone.vx, stone.vy);
+            reward += velocity * 0.01;
           } else {
             reward = 0.0;
           }
 
           if (died) {
             obsBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => new Array(OBS_SIZE).fill(0)));
-            actionBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => [0, 0, 0]));
+            actionBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => [0, 0, 0, 0]));
           }
           const buf = obsBuffers.get(id) ?? [];
           buf.push(buildObs(id));

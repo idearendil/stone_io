@@ -9,7 +9,7 @@ export class TrainedBot {
     this.stoneId = stoneId;
     this._layers = weightsJson.layers;
     this._obsBuffer = [];
-    this._actBuffer = Array.from({ length: 3 }, () => [0, 0, 0]);
+    this._actBuffer = Array.from({ length: 3 }, () => [0, 0, 0, 0]);
     this._DELAY = 3;
     this._ACTION_REPEAT = 3;
     this._AR_counter = 0;
@@ -19,18 +19,16 @@ export class TrainedBot {
     const stone = engine.stones.get(this.stoneId);
     if (!stone || !stone.alive) {
       this._obsBuffer = [];
-      this._actBuffer = Array.from({ length: this._DELAY }, () => [0, 0, 0]);
+      this._actBuffer = Array.from({ length: this._DELAY }, () => [0, 0, 0, 0]);
       return;
     }
     if (this._AR_counter > 0) {
-      const dx = this._actBuffer.at(-1)[0];
-      const dy = this._actBuffer.at(-1)[1];
-      const boost = this._actBuffer.at(-1)[2];
+      const [dx, dy, power, boost] = this._actBuffer.at(-1);
       const VP = 200;
       engine.setInput(
         this.stoneId,
-        VP / 2 + dx * 120,
-        VP / 2 + dy * 120,
+        VP / 2 + dx * 120 * power,
+        VP / 2 + dy * 120 * power,
         VP, VP,
       );
       if (boost > 0.5) engine.boost(this.stoneId);
@@ -46,18 +44,24 @@ export class TrainedBot {
       fullObs.set(actFlat, delayedObs.length);
 
       const raw = this._forward(fullObs);
-      const dx    = Math.tanh(raw[0]);
-      const dy    = Math.tanh(raw[1]);
-      const boost = 1 / (1 + Math.exp(-raw[2])) > 0.5;
+      // Normalize (raw_x, raw_y) after tanh to unit direction vector
+      const tx = Math.tanh(raw[0]);
+      const ty = Math.tanh(raw[1]);
+      const mag = Math.hypot(tx, ty);
+      const dx = mag > 1e-6 ? tx / mag : 0;
+      const dy = mag > 1e-6 ? ty / mag : 0;
+      const power = 1 / (1 + Math.exp(-raw[2]));   // sigmoid → [0, 1]
+      // raw[3..5] = log_stds (ignored at inference); raw[6] = boost logit
+      const boost = 1 / (1 + Math.exp(-raw[6])) > 0.5;
 
-      this._actBuffer.push([dx, dy, boost ? 1.0 : 0.0]);
+      this._actBuffer.push([dx, dy, power, boost ? 1.0 : 0.0]);
       this._actBuffer.shift();
 
       const VP = 200;
       engine.setInput(
         this.stoneId,
-        VP / 2 + dx * 120,
-        VP / 2 + dy * 120,
+        VP / 2 + dx * 120 * power,
+        VP / 2 + dy * 120 * power,
         VP, VP,
       );
       if (boost) engine.boost(this.stoneId);

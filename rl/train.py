@@ -34,8 +34,8 @@ from network import ActorCritic
 # ------------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------------
-OBS_DIM    = 71
-ACT_DIM    = 3
+OBS_DIM    = 74
+ACT_DIM    = 4
 BASE_PORT  = 8000
 POOL_SIZE  = 5
 POOL_EVERY = 5   # updates
@@ -181,8 +181,9 @@ def train(args: argparse.Namespace) -> None:
     finished_rewards: list[float] = []
     finished_lengths: list[int]   = []
 
-    # exclude cols for obs
-    exclude_cols = np.r_[65:71, 74:80, 83:89]
+    # exclude cols for obs: keep action entries at buffer positions 0, 3, 6 (one per decision step)
+    # server sends 62 + 9*4 = 98 dims; remove entries 1,2,4,5,7,8 (8 dims each) → 98-24 = 74
+    exclude_cols = np.r_[66:74, 78:86, 90:98]
 
     wandb.init(
         entity='leetm2021-postech',
