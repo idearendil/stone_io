@@ -19,12 +19,6 @@ let agentIds = [];
 const prevAreas = new Map();
 /** stoneId -> {dx, dy} direction from previous step */
 const prevDirs = new Map();
-/** stoneId -> obs[] rolling buffer for {OBS_DELAYxACTION_REPEAT}-step perception delay */
-const obsBuffers = new Map();
-/** stoneId -> [[dx,dy,boost]×OBS_DELAYxACTION_REPEAT] rolling action history */
-const actionBuffers = new Map();
-const OBS_DELAY = 3;
-const ACTION_REPEAT = 3;
 
 // ---------------------------------------------------------------------------
 // Observation builder
@@ -99,9 +93,7 @@ function buildObs(stoneId) {
 function buildObsAll() {
   const observations = {};
   for (let i = 0; i < agentIds.length; i++) {
-    const id = agentIds[i];
-    const actHistory = (actionBuffers.get(id) ?? []).flat();
-    observations[`agent_${i}`] = buildObs(id).concat(actHistory);
+    observations[`agent_${i}`] = buildObs(agentIds[i]);
   }
   return observations;
 }
@@ -130,15 +122,10 @@ function resetEngine() {
   );
   for (let i = 0; i < initCount; i++) engine._spawnInitialFragments();
 
-  obsBuffers.clear();
-  actionBuffers.clear();
   for (const id of agentIds) {
     const stone = engine.stones.get(id);
     prevAreas.set(id, stone ? stone.area : 0);
     prevDirs.set(id, { dx: 0, dy: 0 });
-    const initObs = buildObs(id);
-    obsBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => initObs.slice()));
-    actionBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => [0, 0, 0]));
   }
 }
 
@@ -185,9 +172,6 @@ const server = http.createServer((req, res) => {
           const act = actions[key] ?? [0, 0, 0];
           const [dx, dy, boostVal] = act;
           currDirs.set(agentIds[i], { dx, dy });
-          const abuf = actionBuffers.get(agentIds[i]) ?? [];
-          abuf.push([dx, dy, boostVal > 0.5 ? 1.0 : 0.0]);
-          abuf.shift();
           engine.setInput(agentIds[i], VP / 2 + dx * 120, VP / 2 + dy * 120, VP, VP);
           if (boostVal > 0.5) engine.boost(agentIds[i]);
         }
@@ -229,14 +213,7 @@ const server = http.createServer((req, res) => {
             reward = 0.0;
           }
 
-          if (died) {
-            obsBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => new Array(OBS_SIZE).fill(0)));
-            actionBuffers.set(id, Array.from({ length: OBS_DELAY * ACTION_REPEAT }, () => [0, 0, 0]));
-          }
-          const buf = obsBuffers.get(id) ?? [];
-          buf.push(buildObs(id));
-          const actHistory = (actionBuffers.get(id) ?? []).flat();
-          observations[key] = buf.shift().concat(actHistory);
+          observations[key] = buildObs(id);
           rewards[key]      = Math.max(-10, Math.min(10, reward));
           terminated[key]   = died;
           truncated[key]    = false;

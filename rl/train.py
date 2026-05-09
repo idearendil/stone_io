@@ -34,7 +34,7 @@ from network import ActorCritic
 # ------------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------------
-OBS_DIM    = 71
+OBS_DIM    = 62
 ACT_DIM    = 3
 BASE_PORT  = 8000
 POOL_SIZE  = 5
@@ -181,9 +181,6 @@ def train(args: argparse.Namespace) -> None:
     finished_rewards: list[float] = []
     finished_lengths: list[int]   = []
 
-    # exclude cols for obs
-    exclude_cols = np.r_[65:71, 74:80, 83:89]
-
     wandb.init(
         entity='leetm2021-postech',
         project='stone_io',
@@ -193,9 +190,6 @@ def train(args: argparse.Namespace) -> None:
     print('Launching environments...')
     vec_env = ParallelEnv(n_envs, env_kwargs_list)
     obs_dicts = vec_env.reset()
-    for e in range(E):
-        for i in range(n_total):
-            obs_dicts[e][f'agent_{i}'] = np.delete(obs_dicts[e][f'agent_{i}'], exclude_cols, axis=0)
     print(f'Envs ready. n_self={n_self}  n_opp={n_opp}  n_envs={n_envs}')
 
     total_steps_done = 0
@@ -270,8 +264,6 @@ def train(args: argparse.Namespace) -> None:
                 for e, (obs_d, rew_d, term_d, trunc_d, _) in enumerate(step_results):
 
                     if inner_repeat == ACTION_REPEAT - 1:
-                        for i in range(n_total):
-                            obs_d[f'agent_{i}'] = np.delete(obs_d[f'agent_{i}'], exclude_cols, axis=0)
                         new_obs_dicts.append(obs_d)
 
                     for i in range(A):
