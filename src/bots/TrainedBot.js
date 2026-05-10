@@ -66,11 +66,18 @@ export class TrainedBot {
     obs[6] = Math.log(Math.abs(radius) + 1);
     obs[7] = Math.floor((MAP_HEIGHT - y) / MAP_HEIGHT * 5);
 
-    // [8-27] 5 nearest fragments (dx, dy, area, dist)
-    const nearFrags = engine.getFragmentsNear(x, y)
+    // [8-27] fragments: 3 small (radius≤8) + 2 large (radius≥9), each (dx, dy, area, dist)
+    const allFrags = engine.getFragmentsNear(x, y)
       .sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - ((b.x - x) ** 2 + (b.y - y) ** 2));
-    for (let i = 0; i < 5 && i < nearFrags.length; i++) {
-      const f    = nearFrags[i];
+    const smallFrags = allFrags.filter(f => f.radius <= 8);
+    const largeFrags = allFrags.filter(f => f.radius >= 9);
+    const fragSlots = [
+      ...smallFrags.slice(0, 3),
+      ...largeFrags.slice(0, 2),
+    ];
+    for (let i = 0; i < 5; i++) {
+      const f = fragSlots[i];
+      if (!f) continue;
       const base = 8 + i * 4;
       obs[base]     = Math.log(Math.abs(f.x - x) + 1) * Math.sign(f.x - x);
       obs[base + 1] = Math.log(Math.abs(f.y - y) + 1) * Math.sign(f.y - y);

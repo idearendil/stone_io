@@ -16,17 +16,17 @@ class ActorCritic(nn.Module):
         self.act_dim = act_dim  # act_dim-1 continuous (movement) + 1 discrete (boost)
 
         self.shared_mlp = nn.Sequential(
-            _ortho(nn.Linear(obs_dim, 128)),
-            nn.LayerNorm(128),
+            _ortho(nn.Linear(obs_dim, 512)),
+            nn.LayerNorm(512),
             nn.ReLU(),
-            _ortho(nn.Linear(128, 128)),
+            _ortho(nn.Linear(512, 512)),
             nn.ReLU(),
         )
         # Raw linear output: first (act_dim-1) → tanh+Normal, last → sigmoid+Bernoulli
         self.actor_head = nn.Sequential(
-            _ortho(nn.Linear(128, act_dim), gain=0.01),
+            _ortho(nn.Linear(512, act_dim), gain=0.01),
         )
-        self.critic_head = _ortho(nn.Linear(128, 1), gain=1.0)
+        self.critic_head = _ortho(nn.Linear(512, 1), gain=1.0)
 
         # Learnable log-std for continuous movement dims only
         self.log_std = nn.Parameter(torch.zeros(act_dim - 1))

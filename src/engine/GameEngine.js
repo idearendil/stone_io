@@ -366,7 +366,7 @@ export class GameEngine {
 
       const angle = Math.random() * 2 * Math.PI;
       const speed = 1 + Math.random() * 2;
-      const radius = basic_radius + basic_radius * 0.2 * (Math.random() * 2 - 1);
+      const radius = basic_radius + basic_radius * 1.0 * (Math.random() * 2 - 1);
       const fx = stone.x + Math.cos(angle) * stone.radius;
       const fy = stone.y + Math.sin(angle) * stone.radius;
 
@@ -416,10 +416,10 @@ export class GameEngine {
         y = 50 + Math.random() * (MAP_HEIGHT - 100);
         const zone = Math.min(ZONES.length - 1, Math.floor(y / zoneH));
         radius = zone <= 1
-          ? 8  + Math.random() * 4   // upper (hard) zones: 8–12 — big reward for risk
+          ? 3  + Math.random() * 3   // upper (hard) zones: 3–6 — big reward for risk
           : zone >= 3
-            ? 3  + Math.random() * 3   // lower (safe) zones: 3–6
-            : 5  + Math.random() * 3;  // middle zone: 5–8
+            ? 5  + Math.random() * 3   // lower (safe) zones: 5–8
+            : 4  + Math.random() * 3;  // middle zone: 4–7
         attempts++;
       } while (
         attempts < 10 &&
@@ -440,10 +440,10 @@ export class GameEngine {
       y = 50 + Math.random() * (MAP_HEIGHT - 100);
       const zone = Math.min(ZONES.length - 1, Math.floor(y / zoneH));
       radius = zone <= 1
-        ? 8  + Math.random() * 4   // upper (hard) zones: 8–12 — big reward for risk
-        : zone >= 3
-          ? 3  + Math.random() * 3   // lower (safe) zones: 3–6
-          : 5  + Math.random() * 3;  // middle zone: 5–8
+        ? 5  + Math.random() * 3   // upper (hard) zones: 5–8 — big reward for risk
+          : zone >= 3
+            ? 3  + Math.random() * 3   // lower (safe) zones: 3–6
+            : 4  + Math.random() * 3;  // middle zone: 4–7
       attempts++;
     } while (
       attempts < 10 &&
