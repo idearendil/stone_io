@@ -214,7 +214,7 @@ const server = http.createServer((req, res) => {
             const curr = currDirs.get(id) ?? { dx: 0, dy: 0 };
             const dirDist = Math.hypot(curr.dx - prev.dx, curr.dy - prev.dy);
             const velocity = Math.min(1, Math.hypot(curr.dx, curr.dy));
-            reward += ((velocity - 0.8) * 0.02 - dirDist * 0.01);
+            reward += ((velocity - 0.8) * 0.01 - dirDist * 0.005);
           } else {
             reward = 0.0;
           }
