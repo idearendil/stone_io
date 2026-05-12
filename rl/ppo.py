@@ -11,7 +11,7 @@ from network import ActorCritic
 # Hyperparameters
 # ------------------------------------------------------------------
 CLIP_EPSILON  = 0.2
-ENTROPY_COEF  = 0.005
+ENTROPY_COEF  = 0.01
 VALUE_COEF    = 0.5
 GAMMA         = 0.99
 GAE_LAMBDA    = 0.95

@@ -106,9 +106,12 @@ export class TrainedBot {
     for (let i = 0; i < 3 && i < gears.length; i++) {
       const g    = gears[i];
       const base = 52 + i * 3;
-      obs[base]     = Math.log(Math.abs(g.x - x) + 1) * Math.sign(g.x - x);
-      obs[base + 1] = Math.log(Math.abs(g.y - y) + 1) * Math.sign(g.y - y);
-      obs[base + 2] = Math.log(Math.max(0, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius) + 1);
+      const distance = Math.max(0.01, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius);
+      const x_distance = Math.abs(g.x - x) * distance / Math.hypot(x - g.x, y - g.y);
+      const y_distance = Math.abs(g.y - y) * distance / Math.hypot(x - g.x, y - g.y);
+      obs[base]     = Math.log(x_distance + 1) * Math.sign(g.x - x);
+      obs[base + 1] = Math.log(y_distance + 1) * Math.sign(g.y - y);
+      obs[base + 2] = Math.log(distance + 1);
     }
 
     // [61] spawn invincibility flag

@@ -86,9 +86,12 @@ function buildObs(stoneId) {
   for (let i = 0; i < 3 && i < nearGears.length; i++) {
     const g = nearGears[i];
     const base = 52 + i * 3;
-    obs[base]     = Math.log(Math.abs(g.x - x) + 1) * Math.sign(g.x - x);
-    obs[base + 1] = Math.log(Math.abs(g.y - y) + 1) * Math.sign(g.y - y);
-    obs[base + 2] = Math.log(Math.max(0, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius) + 1);
+    const distance = Math.max(0.01, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius);
+    const x_distance = Math.abs(g.x - x) * distance / Math.hypot(x - g.x, y - g.y);
+    const y_distance = Math.abs(g.y - y) * distance / Math.hypot(x - g.x, y - g.y);
+    obs[base]     = Math.log(x_distance + 1) * Math.sign(g.x - x);
+    obs[base + 1] = Math.log(y_distance + 1) * Math.sign(g.y - y);
+    obs[base + 2] = Math.log(distance + 1);
   }
 
   // [61] spawn invincibility flag
@@ -206,15 +209,17 @@ const server = http.createServer((req, res) => {
           if (died) {
             reward = -1000.0;
           } else if (alive) {
-            reward = Math.sign(currArea - prevArea) * Math.log(Math.abs(currArea - prevArea) + 1) * 0.8;
+            reward = Math.sign(currArea - prevArea) * Math.log(Math.abs(currArea - prevArea) + 1) * 0.5;
 
             // Penalty: direction change proportional to Euclidean distance between actions
             // Compensate for huge velocity
-            const prev = prevDirs.get(id) ?? { dx: 0, dy: 0 };
-            const curr = currDirs.get(id) ?? { dx: 0, dy: 0 };
-            const dirDist = Math.hypot(curr.dx - prev.dx, curr.dy - prev.dy);
-            const velocity = Math.min(1, Math.hypot(curr.dx, curr.dy));
-            reward += ((velocity - 0.8) * 0.01 - dirDist * 0.005);
+            // const prev = prevDirs.get(id) ?? { dx: 0, dy: 0 };
+            // const curr = currDirs.get(id) ?? { dx: 0, dy: 0 };
+            // const dirDist = Math.hypot(curr.dx - prev.dx, curr.dy - prev.dy);
+            // const velocity = Math.min(1, Math.hypot(curr.dx, curr.dy));
+            // reward += ((velocity - 0.8) * 0.0 - dirDist * 0.0);
+            const velocity = Math.hypot(stone.vx, stone.vy);
+            reward += Math.log(velocity + 1) * 0.01;
           } else {
             reward = 0.0;
           }
