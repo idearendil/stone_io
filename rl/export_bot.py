@@ -16,7 +16,7 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from network import ActorCritic
+from network import Actor
 
 OBS_DIM = 62
 ACT_DIM = 3
@@ -26,7 +26,7 @@ ACT_DIM = 3
 # ONNX export
 # ------------------------------------------------------------------
 
-def export_onnx(model: ActorCritic, path: str) -> None:
+def export_onnx(model: Actor, path: str) -> None:
     model.eval()
     dummy = torch.zeros(1, OBS_DIM)
     torch.onnx.export(
@@ -34,7 +34,7 @@ def export_onnx(model: ActorCritic, path: str) -> None:
         dummy,
         path,
         input_names=['obs'],
-        output_names=['action_mean', 'value'],
+        output_names=['action_raw'],
         dynamic_axes={'obs': {0: 'batch_size'}},
         opset_version=17,
     )
@@ -49,7 +49,7 @@ def _t(tensor: torch.Tensor) -> list:
     return tensor.detach().tolist()
 
 
-def export_json(model: ActorCritic, path: str) -> None:
+def export_json(model: Actor, path: str) -> None:
     model.eval()
     sm = model.shared_mlp
     ah = model.actor_head
@@ -88,9 +88,9 @@ if __name__ == '__main__':
     args = parse_args()
     out  = Path(args.out_dir)
 
-    model = ActorCritic(obs_dim=OBS_DIM, act_dim=ACT_DIM)
+    model = Actor(obs_dim=OBS_DIM, act_dim=ACT_DIM)
     ckpt  = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
-    model.load_state_dict(ckpt['model'])
+    model.load_state_dict(ckpt['actor'])
 
     export_onnx(model, str(out / 'bot.onnx'))
     export_json(model, str(out / 'bot.json'))

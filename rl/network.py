@@ -9,11 +9,11 @@ def _ortho(layer, gain: float = 1.0) -> nn.Linear:
     return layer
 
 
-class ActorCritic(nn.Module):
+class Actor(nn.Module):
     def __init__(self, obs_dim: int = 62, act_dim: int = 3):
         super().__init__()
         self.obs_dim = obs_dim
-        self.act_dim = act_dim  # act_dim-1 continuous (movement) + 1 discrete (boost)
+        self.act_dim = act_dim
 
         self.shared_mlp = nn.Sequential(
             _ortho(nn.Linear(obs_dim, 256)),
@@ -22,51 +22,30 @@ class ActorCritic(nn.Module):
             _ortho(nn.Linear(256, 256)),
             nn.ReLU(),
         )
-        # Raw linear output: first (act_dim-1) → tanh+Normal, last → sigmoid+Bernoulli
         self.actor_head = nn.Sequential(
             _ortho(nn.Linear(256, act_dim), gain=0.01),
         )
-        self.critic_head = _ortho(nn.Linear(256, 1), gain=1.0)
-
-        # Learnable log-std for continuous movement dims only
         self.log_std = nn.Parameter(torch.zeros(act_dim - 1))
 
-    def _features(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.shared_mlp(obs)
-
     def forward(self, obs: torch.Tensor):
-        """Deterministic forward — returns (raw_actor_out, value)."""
-        f = self._features(obs)
-        return self.actor_head(f), self.critic_head(f).squeeze(-1)
+        return self.actor_head(self.shared_mlp(obs))
 
-    def get_action_and_value(
+    def get_action_and_log_prob(
         self,
         obs: torch.Tensor,
         action: torch.Tensor | None = None,
     ):
         """
-        Sample (or re-evaluate) an action from the stochastic policy.
-
+        Returns: action (*, act_dim), log_prob (*,), entropy (*,)
         action layout: [dx, dy, boost]
-          - dx, dy : continuous, Normal(tanh(mean), std), clamped to [-1,1]
-          - boost  : discrete 0/1, Bernoulli(sigmoid(logit))
-
-        Returns:
-            action   : (*, act_dim)
-            log_prob : (*,)   sum over all dims
-            entropy  : (*,)   sum over all dims
-            value    : (*,)
+          - dx, dy: Normal(tanh(mean), std), clamped to [-1, 1]
+          - boost:  Bernoulli(sigmoid(logit))
         """
-        f = self._features(obs)
-        raw = self.actor_head(f)
-        value = self.critic_head(f).squeeze(-1)
+        raw = self.actor_head(self.shared_mlp(obs))
 
-        # Movement (continuous)
         move_mean = torch.tanh(raw[:, :-1])
         std = torch.exp(self.log_std.clamp(-4, 2)).expand_as(move_mean)
         move_dist = Normal(move_mean, std)
-
-        # Boost (discrete)
         boost_dist = Bernoulli(torch.sigmoid(raw[:, -1]))
 
         if action is None:
@@ -79,5 +58,22 @@ class ActorCritic(nn.Module):
 
         log_prob = move_dist.log_prob(action_move).sum(-1) + boost_dist.log_prob(action_boost)
         entropy = move_dist.entropy().sum(-1) + boost_dist.entropy()
+        return action, log_prob, entropy
 
-        return action, log_prob, entropy, value
+
+class Critic(nn.Module):
+    def __init__(self, obs_dim: int = 62):
+        super().__init__()
+        self.obs_dim = obs_dim
+
+        self.shared_mlp = nn.Sequential(
+            _ortho(nn.Linear(obs_dim, 256)),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            _ortho(nn.Linear(256, 256)),
+            nn.ReLU(),
+        )
+        self.critic_head = _ortho(nn.Linear(256, 1), gain=1.0)
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.critic_head(self.shared_mlp(obs)).squeeze(-1)

@@ -29,7 +29,7 @@ import wandb
 sys.path.insert(0, str(Path(__file__).parent))
 from stone_env import StoneEnv
 from ppo import PPOAgent, RolloutBuffer, GAMMA, GAE_LAMBDA
-from network import ActorCritic
+from network import Actor
 
 # ------------------------------------------------------------------
 # Defaults
@@ -120,22 +120,22 @@ class ParallelEnv:
 # Self-play pool helpers
 # ------------------------------------------------------------------
 
-def _snapshot(model: ActorCritic) -> ActorCritic:
-    device = next(model.parameters()).device
-    snap = ActorCritic(model.obs_dim, model.act_dim).to(device)
-    snap.load_state_dict(copy.deepcopy(model.state_dict()))
+def _snapshot(actor: Actor) -> Actor:
+    device = next(actor.parameters()).device
+    snap = Actor(actor.obs_dim, actor.act_dim).to(device)
+    snap.load_state_dict(copy.deepcopy(actor.state_dict()))
     snap.eval()
     return snap
 
 
 @torch.no_grad()
-def _pool_act_batch(obs_batch: np.ndarray, pool_model: ActorCritic) -> np.ndarray:
-    """Batch inference for all opponents sharing the same pool model.
+def _pool_act_batch(obs_batch: np.ndarray, pool_actor: Actor) -> np.ndarray:
+    """Batch inference for all opponents sharing the same pool actor.
     obs_batch: (N, obs_dim) → actions: (N, act_dim)
     """
-    device = next(pool_model.parameters()).device
+    device = next(pool_actor.parameters()).device
     t = torch.as_tensor(obs_batch, dtype=torch.float32).to(device)
-    actions, *_ = pool_model.get_action_and_value(t)
+    actions, *_ = pool_actor.get_action_and_log_prob(t)
     return actions.cpu().numpy()
 
 
@@ -161,10 +161,10 @@ def train(args: argparse.Namespace) -> None:
         act_dim=ACT_DIM,
         total_steps=args.total_steps,
     )
-    # Inform scheduler about rollout size for LR decay
+    agent._rollout_size = args.rollout_steps * n_envs * n_self * ACTION_REPEAT
     agent._rollout_size = args.rollout_steps * n_envs * n_self * ACTION_REPEAT
 
-    pool: list[ActorCritic] = []
+    pool: list[Actor] = []
 
     # ---- rollout storage (steps × envs × agents, flattened per update) ----
     T, E, A = args.rollout_steps, n_envs, n_self
@@ -198,7 +198,8 @@ def train(args: argparse.Namespace) -> None:
 
     while total_steps_done < args.total_steps:
         # ---- collect rollout ----
-        agent.model.eval()
+        agent.actor.eval()
+        agent.critic.eval()
 
         # Assign each opponent a fixed pool model for this entire rollout
         opp_pool_indices: dict[tuple[int, int], int | None] = {
@@ -240,7 +241,7 @@ def train(args: argparse.Namespace) -> None:
                     obs_dicts[e][f'agent_{i}']
                     for (e, i) in group
                 ])
-                model = agent.model if idx is None else pool[idx]
+                model = agent.actor if idx is None else pool[idx]
                 batch_acts = _pool_act_batch(obs_batch, model)
                 for j, (e, i) in enumerate(group):
                     opp_actions[(e, i)] = batch_acts[j]
@@ -313,7 +314,6 @@ def train(args: argparse.Namespace) -> None:
                 returns[:, e, i]    = ret
 
         # ---- PPO update ----
-        agent.model.train()
         loss_dict = agent.update(
             obs=buf_obs.reshape(-1, OBS_DIM),
             actions=buf_actions.reshape(-1, ACT_DIM),
@@ -348,14 +348,13 @@ def train(args: argparse.Namespace) -> None:
             'policy_loss':  loss_dict['policy_loss'],
             'value_loss':   loss_dict['value_loss'],
             'entropy':      loss_dict['entropy'],
-            'lr':           agent.optimizer.param_groups[0]['lr'],
             'pool_size':    len(pool),
             'radius_hist':  wandb.Image(hist_path),
         }, step=total_steps_done)
 
         # ---- pool / checkpoint management ----
         if update_count % POOL_EVERY == 0:
-            pool.append(_snapshot(agent.model))
+            pool.append(_snapshot(agent.actor))
             if len(pool) > POOL_SIZE:
                 pool.pop(0)
             print(f'  [pool] updated, size={len(pool)}')
@@ -370,7 +369,7 @@ def train(args: argparse.Namespace) -> None:
             elapsed = time.time() - t_start
             mean_rew = np.mean(finished_rewards[-200:]) if finished_rewards else 0.0
             mean_len = np.mean(finished_lengths[-200:]) if finished_lengths else 0.0
-            lr_now   = agent.optimizer.param_groups[0]['lr']
+            lr_now   = agent.actor_optimizer.param_groups[0]['lr']
             print(
                 f'update={update_count:5d}  '
                 f'steps={total_steps_done:9d}  '
@@ -379,7 +378,7 @@ def train(args: argparse.Namespace) -> None:
                 f'policy_loss={loss_dict["policy_loss"]:7.4f}  '
                 f'value_loss={loss_dict["value_loss"]:7.4f}  '
                 f'entropy={loss_dict["entropy"]:6.4f}  '
-                f'lr={lr_now:.2e}  '
+                f'actor_lr={lr_now:.2e}  '
                 f'elapsed={elapsed:.0f}s'
             )
 
@@ -397,7 +396,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description='PPO self-play training for Stone.io')
     p.add_argument('--n-agents',        type=int,   default=40)
     p.add_argument('--n-opponents',     type=int,   default=60)
-    p.add_argument('--total-steps',     type=int,   default=100_000_000)
+    p.add_argument('--total-steps',     type=int,   default=90_000_000)
     p.add_argument('--rollout-steps',   type=int,   default=1000)
     p.add_argument('--n-envs',          type=int,   default=2)
     p.add_argument('--checkpoint-dir',  type=str,   default='checkpoints')
