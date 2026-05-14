@@ -209,7 +209,7 @@ const server = http.createServer((req, res) => {
           if (died) {
             reward = -1000.0;
           } else if (alive) {
-            reward = Math.sign(currArea - prevArea) * Math.log(Math.abs(currArea - prevArea) + 1) * 0.5;
+            reward = Math.sign(currArea - prevArea) * Math.log(Math.abs(currArea - prevArea) + 1) * 0.4;
 
             // Penalty: direction change proportional to Euclidean distance between actions
             // Compensate for huge velocity

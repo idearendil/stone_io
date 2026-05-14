@@ -11,14 +11,14 @@ from network import Actor, Critic
 # Hyperparameters
 # ------------------------------------------------------------------
 CLIP_EPSILON      = 0.2
-ENTROPY_COEF      = 0.01
+ENTROPY_COEF      = 0.015
 GAMMA             = 0.99
 GAE_LAMBDA        = 0.95
 N_EPOCHS          = 4
 MINIBATCH         = 256
 MAX_GRAD_NORM     = 0.5
 LR                = 3e-4
-MAX_CRITIC_EPOCHS = 20
+MAX_CRITIC_EPOCHS = 100
 CRITIC_PATIENCE   = 2
 
 
