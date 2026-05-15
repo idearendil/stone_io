@@ -18,8 +18,32 @@ N_EPOCHS          = 4
 MINIBATCH         = 256
 MAX_GRAD_NORM     = 0.5
 LR                = 3e-4
-MAX_CRITIC_EPOCHS = 100
+MAX_CRITIC_EPOCHS = 1000
 CRITIC_PATIENCE   = 2
+N_QUANTILES       = 51
+
+
+# ------------------------------------------------------------------
+# Quantile Huber loss (QR-DQN style)
+# ------------------------------------------------------------------
+
+def quantile_huber_loss(
+    quantiles: torch.Tensor,
+    targets:   torch.Tensor,
+    kappa:     float = 1.0,
+) -> torch.Tensor:
+    """QR-DQN quantile Huber loss.
+    quantiles: (B, N)  predicted quantile values
+    targets:   (B,)    scalar target returns
+    """
+    N   = quantiles.shape[-1]
+    tau = (torch.arange(N, device=quantiles.device, dtype=torch.float32) + 0.5) / N
+    u   = targets.unsqueeze(-1) - quantiles                          # (B, N)
+    huber = torch.where(u.abs() <= kappa,
+                        0.5 * u.pow(2),
+                        kappa * (u.abs() - 0.5 * kappa))
+    qloss = (tau.unsqueeze(0) - (u < 0).float()).abs() * huber / kappa
+    return qloss.sum(dim=-1).mean()
 
 
 # ------------------------------------------------------------------
@@ -95,7 +119,7 @@ class PPOAgent:
     ):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.actor  = Actor(obs_dim, act_dim).to(self.device)
-        self.critic = Critic(obs_dim).to(self.device)
+        self.critic = Critic(obs_dim, n_quantiles=N_QUANTILES).to(self.device)
         self.actor_optimizer  = optim.Adam(self.actor.parameters(),  lr=lr, eps=1e-5)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr, eps=1e-5)
         self._update_count = 0
@@ -110,7 +134,7 @@ class PPOAgent:
     def act(self, obs: np.ndarray) -> tuple[np.ndarray, float, float]:
         t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0).to(self.device)
         action, log_prob, _ = self.actor.get_action_and_log_prob(t)
-        value = self.critic(t)
+        value = self.critic.mean_value(t)
         return action.squeeze(0).cpu().numpy(), log_prob.item(), value.item()
 
     @torch.no_grad()
@@ -119,7 +143,7 @@ class PPOAgent:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         t = torch.as_tensor(obs, dtype=torch.float32).to(self.device)
         actions, log_probs, _ = self.actor.get_action_and_log_prob(t)
-        values = self.critic(t)
+        values = self.critic.mean_value(t)
         return actions.cpu().numpy(), log_probs.cpu().numpy(), values.cpu().numpy()
 
     # ------------------------------------------------------------------
@@ -192,7 +216,7 @@ class PPOAgent:
                 mb = idx[start : start + MINIBATCH]
                 if len(mb) < 2:
                     continue
-                v_loss = nn.functional.mse_loss(self.critic(t_obs_tr[mb]), t_ret_tr[mb])
+                v_loss = quantile_huber_loss(self.critic(t_obs_tr[mb]), t_ret_tr[mb])
                 self.critic_optimizer.zero_grad()
                 v_loss.backward()
                 nn.utils.clip_grad_norm_(self.critic.parameters(), MAX_GRAD_NORM)
@@ -201,7 +225,7 @@ class PPOAgent:
             v_losses.extend(ep_v)
 
             with torch.no_grad():
-                val_loss = nn.functional.mse_loss(self.critic(t_obs_va), t_ret_va).item()
+                val_loss = quantile_huber_loss(self.critic(t_obs_va), t_ret_va).item()
 
             if val_loss < best_val:
                 best_val = val_loss

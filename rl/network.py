@@ -62,9 +62,10 @@ class Actor(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self, obs_dim: int = 62):
+    def __init__(self, obs_dim: int = 62, n_quantiles: int = 51):
         super().__init__()
         self.obs_dim = obs_dim
+        self.n_quantiles = n_quantiles
 
         self.shared_mlp = nn.Sequential(
             _ortho(nn.Linear(obs_dim, 256)),
@@ -73,7 +74,10 @@ class Critic(nn.Module):
             _ortho(nn.Linear(256, 256)),
             nn.ReLU(),
         )
-        self.critic_head = _ortho(nn.Linear(256, 1), gain=1.0)
+        self.critic_head = _ortho(nn.Linear(256, n_quantiles), gain=1.0)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.critic_head(self.shared_mlp(obs)).squeeze(-1)
+        return self.critic_head(self.shared_mlp(obs))  # (*, n_quantiles)
+
+    def mean_value(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.forward(obs).mean(dim=-1)
