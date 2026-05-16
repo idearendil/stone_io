@@ -32,18 +32,53 @@ def quantile_huber_loss(
     targets:   torch.Tensor,
     kappa:     float = 1.0,
 ) -> torch.Tensor:
-    """QR-DQN quantile Huber loss.
+    """QR-DQN quantile Huber loss with distributional targets.
     quantiles: (B, N)  predicted quantile values
-    targets:   (B,)    scalar target returns
+    targets:   (B, N)  distributional target returns (one per scenario)
     """
     N   = quantiles.shape[-1]
     tau = (torch.arange(N, device=quantiles.device, dtype=torch.float32) + 0.5) / N
-    u   = targets.unsqueeze(-1) - quantiles                          # (B, N)
+
+    # u[b, i, j] = targets[b, j] - quantiles[b, i]
+    u = targets.unsqueeze(1) - quantiles.unsqueeze(2)              # (B, N, N)
     huber = torch.where(u.abs() <= kappa,
                         0.5 * u.pow(2),
                         kappa * (u.abs() - 0.5 * kappa))
-    qloss = (tau.unsqueeze(0) - (u < 0).float()).abs() * huber / kappa
-    return qloss.sum(dim=-1).mean()
+    qloss = (tau.view(1, N, 1) - (u < 0).float()).abs() * huber / kappa
+    return qloss.sum(dim=2).mean()                                 # sum over targets, mean over pred+batch
+
+
+def compute_distributional_returns(
+    rewards:         np.ndarray,   # (T,)
+    dones:           np.ndarray,   # (T,)
+    quantile_values: np.ndarray,   # (T, N)
+    last_quantiles:  np.ndarray,   # (N,)
+    gamma:           float = GAMMA,
+    gae_lambda:      float = GAE_LAMBDA,
+) -> np.ndarray:                   # (T, N)
+    """
+    For each of N return scenarios, sample one quantile value per timestep
+    and run a GAE computation. Returns distributional returns (T, N).
+    """
+    T, N = quantile_values.shape
+
+    # For each scenario k and each timestep t, sample one quantile index
+    idx      = np.random.randint(0, N, size=(T, N))                    # (T, N)
+    sampled  = quantile_values[np.arange(T)[:, None], idx]             # (T, N)
+
+    last_idx     = np.random.randint(0, N, size=(N,))
+    last_sampled = last_quantiles[last_idx]                             # (N,)
+
+    adv      = np.zeros((T, N), dtype=np.float32)
+    last_gae = np.zeros(N,     dtype=np.float32)
+    for t in reversed(range(T)):
+        nv       = last_sampled if t == T - 1 else sampled[t + 1]      # (N,)
+        mask     = 1.0 - dones[t]
+        delta    = rewards[t] + gamma * nv * mask - sampled[t]         # (N,)
+        last_gae = delta + gamma * gae_lambda * mask * last_gae        # (N,)
+        adv[t]   = last_gae
+
+    return adv + sampled                                               # (T, N)
 
 
 # ------------------------------------------------------------------
@@ -143,7 +178,7 @@ class PPOAgent:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         t = torch.as_tensor(obs, dtype=torch.float32).to(self.device)
         actions, log_probs, _ = self.actor.get_action_and_log_prob(t)
-        values = self.critic.mean_value(t)
+        values = self.critic(t)                    # (B, N_QUANTILES)
         return actions.cpu().numpy(), log_probs.cpu().numpy(), values.cpu().numpy()
 
     # ------------------------------------------------------------------

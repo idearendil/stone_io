@@ -28,7 +28,7 @@ import wandb
 # Allow importing sibling modules
 sys.path.insert(0, str(Path(__file__).parent))
 from stone_env import StoneEnv
-from ppo import PPOAgent, RolloutBuffer, GAMMA, GAE_LAMBDA
+from ppo import PPOAgent, RolloutBuffer, GAMMA, GAE_LAMBDA, N_QUANTILES, compute_distributional_returns
 from network import Actor
 
 # ------------------------------------------------------------------
@@ -171,9 +171,10 @@ def train(args: argparse.Namespace) -> None:
     buf_obs      = np.zeros((T, E, A, OBS_DIM), dtype=np.float32)
     buf_actions  = np.zeros((T, E, A, ACT_DIM), dtype=np.float32)
     buf_log_probs = np.zeros((T, E, A),          dtype=np.float32)
-    buf_values   = np.zeros((T, E, A),           dtype=np.float32)
-    buf_rewards  = np.zeros((T, E, A),           dtype=np.float32)
-    buf_dones    = np.zeros((T, E, A),           dtype=np.float32)
+    buf_values    = np.zeros((T, E, A),              dtype=np.float32)
+    buf_quantiles = np.zeros((T, E, A, N_QUANTILES), dtype=np.float32)
+    buf_rewards   = np.zeros((T, E, A),              dtype=np.float32)
+    buf_dones     = np.zeros((T, E, A),              dtype=np.float32)
 
     # per-agent episode stats for logging
     ep_rewards   = np.zeros((E, A), dtype=np.float64)
@@ -220,19 +221,20 @@ def train(args: argparse.Namespace) -> None:
                 obs_dicts[e][f'agent_{i}']
                 for e in range(E) for i in range(A)
             ])
-            all_actions, all_log_probs, all_values = agent.act_batch(self_obs_batch)
+            all_actions, all_log_probs, all_quantiles = agent.act_batch(self_obs_batch)
             # Reshape to (E, A, ...)
             all_actions   = all_actions.reshape(E, A, ACT_DIM)
             all_log_probs = all_log_probs.reshape(E, A)
-            all_values    = all_values.reshape(E, A)
+            all_quantiles = all_quantiles.reshape(E, A, N_QUANTILES)
 
             # Store self-agent data
             for e in range(E):
                 for i in range(A):
-                    buf_obs[step, e, i]       = obs_dicts[e][f'agent_{i}']
-                    buf_actions[step, e, i]   = all_actions[e, i]
-                    buf_log_probs[step, e, i] = all_log_probs[e, i]
-                    buf_values[step, e, i]    = all_values[e, i]
+                    buf_obs[step, e, i]          = obs_dicts[e][f'agent_{i}']
+                    buf_actions[step, e, i]      = all_actions[e, i]
+                    buf_log_probs[step, e, i]    = all_log_probs[e, i]
+                    buf_values[step, e, i]       = all_quantiles[e, i].mean()   # scalar mean for GAE advantage
+                    buf_quantiles[step, e, i]    = all_quantiles[e, i]          # full quantiles for returns
 
             # Compute opponent actions — one batch forward pass per unique pool model
             opp_actions: dict[tuple[int, int], np.ndarray] = {}
@@ -294,12 +296,13 @@ def train(args: argparse.Namespace) -> None:
             obs_dicts[e][f'agent_{i}']
             for e in range(E) for i in range(A)
         ])
-        _, _, last_vals = agent.act_batch(last_obs_batch)
-        last_vals = last_vals.reshape(E, A)
+        _, _, last_quantiles_flat = agent.act_batch(last_obs_batch)
+        last_quantiles_flat = last_quantiles_flat.reshape(E, A, N_QUANTILES)
+        last_vals = last_quantiles_flat.mean(axis=-1)              # (E, A) scalar mean for GAE advantage
 
         # ---- GAE per (env, agent) trajectory ----
-        advantages = np.zeros((T, E, A), dtype=np.float32)
-        returns    = np.zeros((T, E, A), dtype=np.float32)
+        advantages = np.zeros((T, E, A),              dtype=np.float32)
+        returns    = np.zeros((T, E, A, N_QUANTILES), dtype=np.float32)
         for e in range(E):
             for i in range(A):
                 buf = RolloutBuffer()
@@ -309,9 +312,14 @@ def train(args: argparse.Namespace) -> None:
                 buf.values    = list(buf_values[:, e, i])
                 buf.rewards   = list(buf_rewards[:, e, i])
                 buf.dones     = list(buf_dones[:, e, i])
-                adv, ret = buf.compute_gae(np.array([last_vals[e, i]]), GAMMA, GAE_LAMBDA)
+                adv, _ = buf.compute_gae(np.array([last_vals[e, i]]), GAMMA, GAE_LAMBDA)
                 advantages[:, e, i] = adv
-                returns[:, e, i]    = ret
+                returns[:, e, i]    = compute_distributional_returns(
+                    buf_rewards[:, e, i],
+                    buf_dones[:, e, i],
+                    buf_quantiles[:, e, i],
+                    last_quantiles_flat[e, i],
+                )
 
         # ---- PPO update ----
         loss_dict = agent.update(
@@ -319,7 +327,7 @@ def train(args: argparse.Namespace) -> None:
             actions=buf_actions.reshape(-1, ACT_DIM),
             log_probs=buf_log_probs.reshape(-1),
             advantages=advantages.reshape(-1),
-            returns=returns.reshape(-1),
+            returns=returns.reshape(-1, N_QUANTILES),
         )
         update_count += 1
 
