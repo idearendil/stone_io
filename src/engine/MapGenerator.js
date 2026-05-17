@@ -27,7 +27,7 @@ export class MapGenerator {
     for (let z = 0; z < ZONES.length; z++) {
       const zone = ZONES[z];
       const yOffset = z * zoneHeight;
-      const points = this._poissonDisk(MAP_WIDTH, zoneHeight, zone.gearSpacing);
+      const points = this._poissonDisk(MAP_WIDTH, zoneHeight, zone.gearSpacing, zone.gearNumMax);
       for (const [x, y] of points) {
         const radius = zone.gearRadiusMin + this._rand() * (zone.gearRadiusMax - zone.gearRadiusMin);
         gears.push(new Gear(x, y + yOffset, radius, z, zone.rpm));
@@ -41,7 +41,7 @@ export class MapGenerator {
    * Grid-accelerated Poisson disk sampling (Bridson 2007).
    * Returns array of [x, y] points with minimum pairwise distance >= minDist.
    */
-  _poissonDisk(width, height, minDist) {
+  _poissonDisk(width, height, minDist, maxNum) {
     const cellSize = minDist / Math.SQRT2;
     const cols = Math.ceil(width / cellSize);
     const rows = Math.ceil(height / cellSize);
@@ -73,24 +73,25 @@ export class MapGenerator {
     };
 
     // Seed with one random point
-    tryInsert(this._rand() * width, this._rand() * height);
-
-    while (active.length > 0) {
-      const idx = Math.floor(this._rand() * active.length);
-      const [ax, ay] = active[idx];
-      let found = false;
-
-      for (let k = 0; k < K; k++) {
-        const angle = this._rand() * Math.PI * 2;
-        const r = minDist * (1 + this._rand()); // sample annulus [minDist, 2*minDist]
-        const x = ax + Math.cos(angle) * r;
-        const y = ay + Math.sin(angle) * r;
-        if (x < 0 || x >= width || y < 0 || y >= height) continue;
-        if (tryInsert(x, y)) { found = true; break; }
-      }
-
-      if (!found) active.splice(idx, 1);
+    for(let i = 0; i < maxNum; i++) {
+      tryInsert(this._rand() * width, this._rand() * height);
     }
+
+    
+      // const idx = Math.floor(this._rand() * active.length);
+      // const [ax, ay] = active[idx];
+      // let found = false;
+
+      // for (let k = 0; k < K; k++) {
+      //   const angle = this._rand() * Math.PI * 2;
+      //   const r = minDist * (1 + this._rand()); // sample annulus [minDist, 2*minDist]
+      //   const x = ax + Math.cos(angle) * r;
+      //   const y = ay + Math.sin(angle) * r;
+      //   if (x < 0 || x >= width || y < 0 || y >= height) continue;
+      //   if (tryInsert(x, y)) { found = true; break; }
+      // }
+
+      // if (!found) active.splice(idx, 1);
 
     return result;
   }

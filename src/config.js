@@ -21,10 +21,10 @@ export const CONFIG = {
   MINIMAP_VIEW_RANGE: 1200,
   FRAG_CELL_SIZE: 500,
   ZONES: [
-    { gearRadiusMin: 320, gearRadiusMax: 640, gearSpacing: 6400, rpm: 30 },
-    { gearRadiusMin: 160,  gearRadiusMax: 320, gearSpacing: 3200, rpm: 40 },
-    { gearRadiusMin: 80,  gearRadiusMax: 160,  gearSpacing: 1600, rpm: 50  },
-    { gearRadiusMin: 40,  gearRadiusMax: 80,  gearSpacing: 800, rpm: 60  },
-    { gearRadiusMin: 20,  gearRadiusMax: 40,  gearSpacing: 400, rpm: 70  },
+    { gearRadiusMin: 320, gearRadiusMax: 640, gearSpacing: 1280, gearNumMax: 2, rpm: 30 },
+    { gearRadiusMin: 160,  gearRadiusMax: 320, gearSpacing: 640, gearNumMax: 10, rpm: 40 },
+    { gearRadiusMin: 80,  gearRadiusMax: 160,  gearSpacing: 320, gearNumMax: 30, rpm: 50  },
+    { gearRadiusMin: 40,  gearRadiusMax: 80,  gearSpacing: 160, gearNumMax: 90, rpm: 60  },
+    { gearRadiusMin: 20,  gearRadiusMax: 40,  gearSpacing: 80, gearNumMax: 270, rpm: 70  },
   ],
 };
