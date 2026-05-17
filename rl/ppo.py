@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from network import Actor, Critic
+from network import Actor, Critic, VEC_DIM, IMG_CHANNELS, IMG_SIZE
 
 # ------------------------------------------------------------------
 # Hyperparameters
@@ -147,14 +147,15 @@ class RolloutBuffer:
 class PPOAgent:
     def __init__(
         self,
-        obs_dim:     int   = 62,
+        vec_dim:     int   = VEC_DIM,
+        img_channels: int  = IMG_CHANNELS,
         act_dim:     int   = 3,
         lr:          float = LR,
         total_steps: int   = 50_000_000,
     ):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.actor  = Actor(obs_dim, act_dim).to(self.device)
-        self.critic = Critic(obs_dim, n_quantiles=N_QUANTILES).to(self.device)
+        self.actor  = Actor(vec_dim, img_channels, act_dim).to(self.device)
+        self.critic = Critic(vec_dim, img_channels, N_QUANTILES).to(self.device)
         self.actor_optimizer  = optim.Adam(self.actor.parameters(),  lr=lr, eps=1e-5)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr, eps=1e-5)
         self._update_count = 0
@@ -166,25 +167,30 @@ class PPOAgent:
 
     # ------------------------------------------------------------------
     @torch.no_grad()
-    def act(self, obs: np.ndarray) -> tuple[np.ndarray, float, float]:
-        t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0).to(self.device)
-        action, log_prob, _ = self.actor.get_action_and_log_prob(t)
-        value = self.critic.mean_value(t)
+    def act(
+        self, obs_vec: np.ndarray, obs_img: np.ndarray
+    ) -> tuple[np.ndarray, float, float]:
+        tv = torch.as_tensor(obs_vec, dtype=torch.float32).unsqueeze(0).to(self.device)
+        ti = torch.as_tensor(obs_img, dtype=torch.float32).unsqueeze(0).to(self.device)
+        action, log_prob, _ = self.actor.get_action_and_log_prob(tv, ti)
+        value = self.critic.mean_value(tv, ti)
         return action.squeeze(0).cpu().numpy(), log_prob.item(), value.item()
 
     @torch.no_grad()
     def act_batch(
-        self, obs: np.ndarray
+        self, obs_vec: np.ndarray, obs_img: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        t = torch.as_tensor(obs, dtype=torch.float32).to(self.device)
-        actions, log_probs, _ = self.actor.get_action_and_log_prob(t)
-        values = self.critic(t)                    # (B, N_QUANTILES)
+        tv = torch.as_tensor(obs_vec, dtype=torch.float32).to(self.device)
+        ti = torch.as_tensor(obs_img, dtype=torch.float32).to(self.device)
+        actions, log_probs, _ = self.actor.get_action_and_log_prob(tv, ti)
+        values = self.critic(tv, ti)               # (B, N_QUANTILES)
         return actions.cpu().numpy(), log_probs.cpu().numpy(), values.cpu().numpy()
 
     # ------------------------------------------------------------------
     def update(
         self,
-        obs:        np.ndarray,
+        obs_vec:    np.ndarray,
+        obs_img:    np.ndarray,
         actions:    np.ndarray,
         log_probs:  np.ndarray,
         advantages: np.ndarray,
@@ -194,13 +200,15 @@ class PPOAgent:
 
         adv = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        t_obs  = torch.as_tensor(obs,       dtype=torch.float32).to(self.device)
-        t_acts = torch.as_tensor(actions,   dtype=torch.float32).to(self.device)
-        t_lp   = torch.as_tensor(log_probs, dtype=torch.float32).to(self.device)
-        t_adv  = torch.as_tensor(adv,       dtype=torch.float32).to(self.device)
-        t_ret  = torch.as_tensor(returns,   dtype=torch.float32).to(self.device)
+        # vec tensors are small — keep on GPU; img tensors are large — keep on CPU
+        t_vec  = torch.as_tensor(obs_vec,    dtype=torch.float32).to(self.device)
+        t_img  = torch.as_tensor(obs_img,    dtype=torch.float32)          # CPU
+        t_acts = torch.as_tensor(actions,    dtype=torch.float32).to(self.device)
+        t_lp   = torch.as_tensor(log_probs,  dtype=torch.float32).to(self.device)
+        t_adv  = torch.as_tensor(adv,        dtype=torch.float32).to(self.device)
+        t_ret  = torch.as_tensor(returns,    dtype=torch.float32).to(self.device)
 
-        n = len(obs)
+        n = len(obs_vec)
         pg_losses, ent_vals = [], []
 
         # ---- Actor update (PPO clipped objective) ----
@@ -212,7 +220,9 @@ class PPOAgent:
                 if len(mb) < 2:
                     continue
 
-                _, new_lp, entropy = self.actor.get_action_and_log_prob(t_obs[mb], t_acts[mb])
+                _, new_lp, entropy = self.actor.get_action_and_log_prob(
+                    t_vec[mb], t_img[mb].to(self.device), t_acts[mb]
+                )
                 ratio   = torch.exp(new_lp - t_lp[mb])
                 pg1     = -t_adv[mb] * ratio
                 pg2     = -t_adv[mb] * ratio.clamp(1 - CLIP_EPSILON, 1 + CLIP_EPSILON)
@@ -234,11 +244,15 @@ class PPOAgent:
         self.critic.train()
         perm    = np.random.permutation(n)
         n_train = int(n * 0.8)
-        tr_idx  = torch.as_tensor(perm[:n_train], dtype=torch.long)
-        va_idx  = torch.as_tensor(perm[n_train:],  dtype=torch.long)
+        tr_idx  = perm[:n_train]
+        va_idx  = perm[n_train:]
 
-        t_obs_tr, t_ret_tr = t_obs[tr_idx], t_ret[tr_idx]
-        t_obs_va, t_ret_va = t_obs[va_idx], t_ret[va_idx]
+        t_vec_tr = t_vec[tr_idx]
+        t_img_tr = t_img[tr_idx]   # CPU
+        t_ret_tr = t_ret[torch.as_tensor(tr_idx, dtype=torch.long)]
+        t_vec_va = t_vec[va_idx]
+        t_img_va = t_img[va_idx]   # CPU
+        t_ret_va = t_ret[torch.as_tensor(va_idx, dtype=torch.long)]
 
         best_val = float('inf')
         no_improve = 0
@@ -251,7 +265,10 @@ class PPOAgent:
                 mb = idx[start : start + MINIBATCH]
                 if len(mb) < 2:
                     continue
-                v_loss = quantile_huber_loss(self.critic(t_obs_tr[mb]), t_ret_tr[mb])
+                v_loss = quantile_huber_loss(
+                    self.critic(t_vec_tr[mb], t_img_tr[mb].to(self.device)),
+                    t_ret_tr[mb],
+                )
                 self.critic_optimizer.zero_grad()
                 v_loss.backward()
                 nn.utils.clip_grad_norm_(self.critic.parameters(), MAX_GRAD_NORM)
@@ -260,7 +277,9 @@ class PPOAgent:
             v_losses.extend(ep_v)
 
             with torch.no_grad():
-                val_loss = quantile_huber_loss(self.critic(t_obs_va), t_ret_va).item()
+                val_loss = quantile_huber_loss(
+                    self.critic(t_vec_va, t_img_va.to(self.device)), t_ret_va
+                ).item()
 
             if val_loss < best_val:
                 best_val = val_loss

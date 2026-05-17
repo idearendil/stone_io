@@ -1,5 +1,5 @@
 """
-Export a trained ActorCritic checkpoint to:
+Export a trained Actor checkpoint to:
   1. ONNX  → bot.onnx        (for Python/serving inference)
   2. JSON  → bot.json / src/bots/bot.json  (for in-browser TrainedBot.js)
 
@@ -16,9 +16,8 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from network import Actor
+from network import Actor, VEC_DIM, IMG_CHANNELS, IMG_SIZE
 
-OBS_DIM = 62
 ACT_DIM = 3
 
 
@@ -28,21 +27,25 @@ ACT_DIM = 3
 
 def export_onnx(model: Actor, path: str) -> None:
     model.eval()
-    dummy = torch.zeros(1, OBS_DIM)
+    dummy_vec = torch.zeros(1, VEC_DIM)
+    dummy_img = torch.zeros(1, IMG_CHANNELS, IMG_SIZE, IMG_SIZE)
     torch.onnx.export(
         model,
-        dummy,
+        (dummy_vec, dummy_img),
         path,
-        input_names=['obs'],
+        input_names=['obs_vec', 'obs_img'],
         output_names=['action_raw'],
-        dynamic_axes={'obs': {0: 'batch_size'}},
+        dynamic_axes={
+            'obs_vec': {0: 'batch_size'},
+            'obs_img': {0: 'batch_size'},
+        },
         opset_version=17,
     )
     print(f'ONNX exported → {path}')
 
 
 # ------------------------------------------------------------------
-# JSON export  (sequential layer description for JS MLP)
+# JSON export  (sequential layer description for JS TrainedBot)
 # ------------------------------------------------------------------
 
 def _t(tensor: torch.Tensor) -> list:
@@ -51,21 +54,38 @@ def _t(tensor: torch.Tensor) -> list:
 
 def export_json(model: Actor, path: str) -> None:
     model.eval()
-    sm = model.shared_mlp
-    ah = model.actor_head
+    cnn = model.cnn
+    vm  = model.vec_mlp
+    sm  = model.shared_mlp
+    ah  = model.actor_head
 
     payload = {
-        'obs_dim': OBS_DIM,
-        'act_dim': ACT_DIM,
-        # Sequential layer list — maps 1-to-1 to TrainedBot._forward()
-        'layers': [
+        'vec_dim':      VEC_DIM,
+        'img_channels': IMG_CHANNELS,
+        'img_size':     IMG_SIZE,
+        'cnn_layers': [
+            {'type': 'conv2d', 'weight': _t(cnn[0].weight), 'bias': _t(cnn[0].bias), 'stride': 2, 'padding': 1},
+            {'type': 'relu'},
+            {'type': 'conv2d', 'weight': _t(cnn[2].weight), 'bias': _t(cnn[2].bias), 'stride': 2, 'padding': 1},
+            {'type': 'relu'},
+            {'type': 'conv2d', 'weight': _t(cnn[4].weight), 'bias': _t(cnn[4].bias), 'stride': 2, 'padding': 1},
+            {'type': 'relu'},
+            {'type': 'flatten'},
+        ],
+        'vec_mlp_layers': [
+            {'type': 'linear', 'weight': _t(vm[0].weight), 'bias': _t(vm[0].bias)},
+            {'type': 'relu'},
+        ],
+        'shared_mlp_layers': [
             {'type': 'linear',     'weight': _t(sm[0].weight), 'bias': _t(sm[0].bias)},
             {'type': 'layer_norm', 'weight': _t(sm[1].weight), 'bias': _t(sm[1].bias)},
             {'type': 'relu'},
             {'type': 'linear',     'weight': _t(sm[3].weight), 'bias': _t(sm[3].bias)},
             {'type': 'relu'},
-            {'type': 'linear',     'weight': _t(ah[0].weight), 'bias': _t(ah[0].bias)},
-            # No activation — JS applies tanh to [:2] and sigmoid threshold to [2]
+        ],
+        'actor_head_layers': [
+            {'type': 'linear', 'weight': _t(ah.weight), 'bias': _t(ah.bias)},
+            # JS applies tanh to [:2] and sigmoid threshold to [2]
         ],
     }
 
@@ -88,7 +108,7 @@ if __name__ == '__main__':
     args = parse_args()
     out  = Path(args.out_dir)
 
-    model = Actor(obs_dim=OBS_DIM, act_dim=ACT_DIM)
+    model = Actor(vec_dim=VEC_DIM, img_channels=IMG_CHANNELS, act_dim=ACT_DIM)
     ckpt  = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     model.load_state_dict(ckpt['actor'])
 

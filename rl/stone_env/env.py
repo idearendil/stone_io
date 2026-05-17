@@ -4,8 +4,7 @@ import numpy as np
 import gymnasium as gym
 
 from .bridge import HeadlessBridge
-
-OBS_SIZE = 62
+from network import VEC_DIM, IMG_CHANNELS, IMG_SIZE
 
 # Auto-increment port so multiple envs in the same process don't collide
 _next_port: list[int] = [7777]
@@ -17,10 +16,10 @@ class StoneEnv(gym.Env):
 
     Single-agent mode (n_agents=1):
         obs, info            = env.reset()
-        obs, rew, term, trunc, info = env.step(action)   # action: np.ndarray shape (2,)
+        obs, rew, term, trunc, info = env.step(action)   # action: np.ndarray shape (3,)
 
     Multi-agent mode (n_agents > 1):
-        obs_dict, info       = env.reset()               # dict[str, np.ndarray]
+        obs_dict, info       = env.reset()               # dict[str, dict]
         obs_dict, rew_dict, term_dict, trunc_dict, info = env.step(action_dict)
     """
 
@@ -37,9 +36,15 @@ class StoneEnv(gym.Env):
             self._port = port
         self._bridge: HeadlessBridge | None = None
 
-        self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(OBS_SIZE,), dtype=np.float32
-        )
+        self.observation_space = gym.spaces.Dict({
+            'vec': gym.spaces.Box(
+                low=-np.inf, high=np.inf, shape=(VEC_DIM,), dtype=np.float32
+            ),
+            'img': gym.spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(IMG_CHANNELS, IMG_SIZE, IMG_SIZE), dtype=np.float32
+            ),
+        })
         self.action_space = gym.spaces.Box(
             low=-1.0, high=1.0, shape=(3,), dtype=np.float32
         )
@@ -57,6 +62,13 @@ class StoneEnv(gym.Env):
     def _to_list(action) -> list[float]:
         return action.tolist() if hasattr(action, 'tolist') else list(action)
 
+    @staticmethod
+    def _parse_agent_obs(d: dict) -> dict:
+        return {
+            'vec': np.array(d['vec'], dtype=np.float32),
+            'img': np.array(d['img'], dtype=np.float32).reshape(IMG_CHANNELS, IMG_SIZE, IMG_SIZE),
+        }
+
     # ------------------------------------------------------------------
     # Gymnasium API
     # ------------------------------------------------------------------
@@ -66,8 +78,8 @@ class StoneEnv(gym.Env):
         result = self._bridge_().post('/reset')
         obs_dict: dict = result['observations']
         if self.n_agents == 1:
-            return np.array(obs_dict['agent_0'], dtype=np.float32), {}
-        return {k: np.array(v, dtype=np.float32) for k, v in obs_dict.items()}, {}
+            return self._parse_agent_obs(obs_dict['agent_0']), {}
+        return {k: self._parse_agent_obs(v) for k, v in obs_dict.items()}, {}
 
     def step(self, action):
         if self.n_agents == 1:
@@ -76,14 +88,14 @@ class StoneEnv(gym.Env):
             actions = {k: self._to_list(v) for k, v in action.items()}
 
         result = self._bridge_().post('/step', {'actions': actions})
-        obs_d  = result['observations']
-        rew_d  = result['rewards']
-        term_d = result['terminated']
+        obs_d   = result['observations']
+        rew_d   = result['rewards']
+        term_d  = result['terminated']
         trunc_d = result['truncated']
 
         if self.n_agents == 1:
             return (
-                np.array(obs_d['agent_0'], dtype=np.float32),
+                self._parse_agent_obs(obs_d['agent_0']),
                 float(rew_d['agent_0']),
                 bool(term_d['agent_0']),
                 bool(trunc_d['agent_0']),
@@ -91,10 +103,10 @@ class StoneEnv(gym.Env):
             )
 
         return (
-            {k: np.array(v, dtype=np.float32) for k, v in obs_d.items()},
-            {k: float(v)                       for k, v in rew_d.items()},
-            {k: bool(v)                        for k, v in term_d.items()},
-            {k: bool(v)                        for k, v in trunc_d.items()},
+            {k: self._parse_agent_obs(v) for k, v in obs_d.items()},
+            {k: float(v)                 for k, v in rew_d.items()},
+            {k: bool(v)                  for k, v in term_d.items()},
+            {k: bool(v)                  for k, v in trunc_d.items()},
             {},
         )
 

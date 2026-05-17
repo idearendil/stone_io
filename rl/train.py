@@ -29,17 +29,16 @@ import wandb
 sys.path.insert(0, str(Path(__file__).parent))
 from stone_env import StoneEnv
 from ppo import PPOAgent, RolloutBuffer, GAMMA, GAE_LAMBDA, N_QUANTILES, compute_distributional_returns
-from network import Actor
+from network import Actor, VEC_DIM, IMG_CHANNELS, IMG_SIZE
 
 # ------------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------------
-OBS_DIM    = 62
 ACT_DIM    = 3
 BASE_PORT  = 8000
 POOL_SIZE  = 5
 POOL_EVERY = 5   # updates
-CKPT_EVERY = 10  # updates
+CKPT_EVERY = 1  # updates
 ACTION_REPEAT = 3
 
 
@@ -122,20 +121,25 @@ class ParallelEnv:
 
 def _snapshot(actor: Actor) -> Actor:
     device = next(actor.parameters()).device
-    snap = Actor(actor.obs_dim, actor.act_dim).to(device)
+    snap = Actor(actor.vec_dim, actor.img_channels, actor.act_dim).to(device)
     snap.load_state_dict(copy.deepcopy(actor.state_dict()))
     snap.eval()
     return snap
 
 
 @torch.no_grad()
-def _pool_act_batch(obs_batch: np.ndarray, pool_actor: Actor) -> np.ndarray:
+def _pool_act_batch(
+    vec_batch: np.ndarray,
+    img_batch: np.ndarray,
+    pool_actor: Actor,
+) -> np.ndarray:
     """Batch inference for all opponents sharing the same pool actor.
-    obs_batch: (N, obs_dim) → actions: (N, act_dim)
+    vec_batch: (N, VEC_DIM), img_batch: (N, IMG_CHANNELS, IMG_SIZE, IMG_SIZE) → actions: (N, ACT_DIM)
     """
     device = next(pool_actor.parameters()).device
-    t = torch.as_tensor(obs_batch, dtype=torch.float32).to(device)
-    actions, *_ = pool_actor.get_action_and_log_prob(t)
+    tv = torch.as_tensor(vec_batch, dtype=torch.float32).to(device)
+    ti = torch.as_tensor(img_batch, dtype=torch.float32).to(device)
+    actions, *_ = pool_actor.get_action_and_log_prob(tv, ti)
     return actions.cpu().numpy()
 
 
@@ -157,20 +161,21 @@ def train(args: argparse.Namespace) -> None:
     ]
 
     agent = PPOAgent(
-        obs_dim=OBS_DIM,
+        vec_dim=VEC_DIM,
+        img_channels=IMG_CHANNELS,
         act_dim=ACT_DIM,
         total_steps=args.total_steps,
     )
-    agent._rollout_size = args.rollout_steps * n_envs * n_self * ACTION_REPEAT
     agent._rollout_size = args.rollout_steps * n_envs * n_self * ACTION_REPEAT
 
     pool: list[Actor] = []
 
     # ---- rollout storage (steps × envs × agents, flattened per update) ----
     T, E, A = args.rollout_steps, n_envs, n_self
-    buf_obs      = np.zeros((T, E, A, OBS_DIM), dtype=np.float32)
-    buf_actions  = np.zeros((T, E, A, ACT_DIM), dtype=np.float32)
-    buf_log_probs = np.zeros((T, E, A),          dtype=np.float32)
+    buf_obs_vec   = np.zeros((T, E, A, VEC_DIM),                          dtype=np.float32)
+    buf_obs_img   = np.zeros((T, E, A, IMG_CHANNELS, IMG_SIZE, IMG_SIZE), dtype=np.float32)
+    buf_actions   = np.zeros((T, E, A, ACT_DIM),    dtype=np.float32)
+    buf_log_probs = np.zeros((T, E, A),              dtype=np.float32)
     buf_values    = np.zeros((T, E, A),              dtype=np.float32)
     buf_quantiles = np.zeros((T, E, A, N_QUANTILES), dtype=np.float32)
     buf_rewards   = np.zeros((T, E, A),              dtype=np.float32)
@@ -209,19 +214,22 @@ def train(args: argparse.Namespace) -> None:
         }
 
         # Group opponents by pool model index for batched inference
-        # {idx_or_None: [(e, i), ...]}
         opp_groups: dict[int | None, list[tuple[int, int]]] = {}
         for (e, i), idx in opp_pool_indices.items():
             opp_groups.setdefault(idx, []).append((e, i))
 
         for step in range(T):
 
-            # Batch all self-agent obs across envs: (E*A, OBS_DIM)
-            self_obs_batch = np.stack([
-                obs_dicts[e][f'agent_{i}']
+            # Batch all self-agent obs across envs: (E*A, ...)
+            self_vec_batch = np.stack([
+                obs_dicts[e][f'agent_{i}']['vec']
                 for e in range(E) for i in range(A)
             ])
-            all_actions, all_log_probs, all_quantiles = agent.act_batch(self_obs_batch)
+            self_img_batch = np.stack([
+                obs_dicts[e][f'agent_{i}']['img']
+                for e in range(E) for i in range(A)
+            ])
+            all_actions, all_log_probs, all_quantiles = agent.act_batch(self_vec_batch, self_img_batch)
             # Reshape to (E, A, ...)
             all_actions   = all_actions.reshape(E, A, ACT_DIM)
             all_log_probs = all_log_probs.reshape(E, A)
@@ -230,21 +238,20 @@ def train(args: argparse.Namespace) -> None:
             # Store self-agent data
             for e in range(E):
                 for i in range(A):
-                    buf_obs[step, e, i]          = obs_dicts[e][f'agent_{i}']
-                    buf_actions[step, e, i]      = all_actions[e, i]
-                    buf_log_probs[step, e, i]    = all_log_probs[e, i]
-                    buf_values[step, e, i]       = all_quantiles[e, i].mean()   # scalar mean for GAE advantage
-                    buf_quantiles[step, e, i]    = all_quantiles[e, i]          # full quantiles for returns
+                    buf_obs_vec[step, e, i]       = obs_dicts[e][f'agent_{i}']['vec']
+                    buf_obs_img[step, e, i]       = obs_dicts[e][f'agent_{i}']['img']
+                    buf_actions[step, e, i]       = all_actions[e, i]
+                    buf_log_probs[step, e, i]     = all_log_probs[e, i]
+                    buf_values[step, e, i]        = all_quantiles[e, i].mean()
+                    buf_quantiles[step, e, i]     = all_quantiles[e, i]
 
             # Compute opponent actions — one batch forward pass per unique pool model
             opp_actions: dict[tuple[int, int], np.ndarray] = {}
             for idx, group in opp_groups.items():
-                obs_batch = np.stack([
-                    obs_dicts[e][f'agent_{i}']
-                    for (e, i) in group
-                ])
+                vec_batch = np.stack([obs_dicts[e][f'agent_{i}']['vec'] for (e, i) in group])
+                img_batch = np.stack([obs_dicts[e][f'agent_{i}']['img'] for (e, i) in group])
                 model = agent.actor if idx is None else pool[idx]
-                batch_acts = _pool_act_batch(obs_batch, model)
+                batch_acts = _pool_act_batch(vec_batch, img_batch, model)
                 for j, (e, i) in enumerate(group):
                     opp_actions[(e, i)] = batch_acts[j]
 
@@ -279,7 +286,7 @@ def train(args: argparse.Namespace) -> None:
                         if inner_repeat == ACTION_REPEAT - 1:
                             buf_rewards[step, e, i] = cum_rewards[e, i]
                             buf_dones[step, e, i] = float(cum_dones[e, i] > 0.5)
-                        
+
                         ep_rewards[e, i] += r
                         ep_lengths[e, i] += 1
                         if d:
@@ -292,11 +299,15 @@ def train(args: argparse.Namespace) -> None:
             total_steps_done += A * E * ACTION_REPEAT
 
         # ---- bootstrap last values ----
-        last_obs_batch = np.stack([
-            obs_dicts[e][f'agent_{i}']
+        last_vec_batch = np.stack([
+            obs_dicts[e][f'agent_{i}']['vec']
             for e in range(E) for i in range(A)
         ])
-        _, _, last_quantiles_flat = agent.act_batch(last_obs_batch)
+        last_img_batch = np.stack([
+            obs_dicts[e][f'agent_{i}']['img']
+            for e in range(E) for i in range(A)
+        ])
+        _, _, last_quantiles_flat = agent.act_batch(last_vec_batch, last_img_batch)
         last_quantiles_flat = last_quantiles_flat.reshape(E, A, N_QUANTILES)
         last_vals = last_quantiles_flat.mean(axis=-1)              # (E, A) scalar mean for GAE advantage
 
@@ -306,7 +317,7 @@ def train(args: argparse.Namespace) -> None:
         for e in range(E):
             for i in range(A):
                 buf = RolloutBuffer()
-                buf.obs       = list(buf_obs[:, e, i])
+                buf.obs       = list(buf_obs_vec[:, e, i])
                 buf.actions   = list(buf_actions[:, e, i])
                 buf.log_probs = list(buf_log_probs[:, e, i])
                 buf.values    = list(buf_values[:, e, i])
@@ -323,7 +334,8 @@ def train(args: argparse.Namespace) -> None:
 
         # ---- PPO update ----
         loss_dict = agent.update(
-            obs=buf_obs.reshape(-1, OBS_DIM),
+            obs_vec=buf_obs_vec.reshape(-1, VEC_DIM),
+            obs_img=buf_obs_img.reshape(-1, IMG_CHANNELS, IMG_SIZE, IMG_SIZE),
             actions=buf_actions.reshape(-1, ACT_DIM),
             log_probs=buf_log_probs.reshape(-1),
             advantages=advantages.reshape(-1),
@@ -404,8 +416,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description='PPO self-play training for Stone.io')
     p.add_argument('--n-agents',        type=int,   default=40)
     p.add_argument('--n-opponents',     type=int,   default=60)
-    p.add_argument('--total-steps',     type=int,   default=90_000_000)
-    p.add_argument('--rollout-steps',   type=int,   default=1000)
+    p.add_argument('--total-steps',     type=int,   default=8_000_000)
+    p.add_argument('--rollout-steps',   type=int,   default=128)
     p.add_argument('--n-envs',          type=int,   default=2)
     p.add_argument('--checkpoint-dir',  type=str,   default='checkpoints')
     p.add_argument('--log-interval',    type=int,   default=10)

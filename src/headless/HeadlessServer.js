@@ -6,7 +6,13 @@ const PORT       = Number(process.env.PORT       ?? 7777);
 const NUM_AGENTS = Number(process.env.NUM_AGENTS  ?? 1);
 const NUM_BOTS   = Number(process.env.NUM_BOTS    ?? 0);
 
-const OBS_SIZE = 62;
+const VEC_SIZE    = 5;
+const IMG_CHANNELS = 8;
+const IMG_SIZE    = 32;
+const BASE_RADIUS = 16;
+const ZOOM_MIN    = 0.20;
+const ZOOM_MAX    = 1.00;
+const VP          = 200;
 
 // Mutable config shared with engine (engine stores the same reference)
 const config = { ...CONFIG, ZONES: CONFIG.ZONES };
@@ -24,86 +30,111 @@ const prevDirs = new Map();
 // Observation builder
 // ---------------------------------------------------------------------------
 
+function getZoom(r) {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, BASE_RADIUS * 4 / (r + BASE_RADIUS * 3)));
+}
+
 function buildObs(stoneId) {
-  const obs = new Array(OBS_SIZE).fill(0);
   const stone = engine.stones.get(stoneId);
-  if (!stone || !stone.alive) return obs;
+  const vec = new Array(VEC_SIZE).fill(0);
+  const img = new Float32Array(IMG_CHANNELS * IMG_SIZE * IMG_SIZE);
+
+  if (!stone || !stone.alive) return { vec, img };
 
   const { x, y, vx, vy, radius } = stone;
-  const { MAP_WIDTH, MAP_HEIGHT, MAX_SPEED } = config;
+  const { MAP_WIDTH, MAP_HEIGHT } = config;
 
-  // [0-3] log distances to map edges (normalized by log of map dimensions)
-  const logW = Math.log(MAP_WIDTH);
-  const logH = Math.log(MAP_HEIGHT);
-  obs[0] = Math.log(Math.max(0, Math.min(x - radius * 0.5, 300)) + 1);
-  obs[1] = Math.log(Math.max(0, Math.min(MAP_WIDTH - x - radius * 0.5, 300)) + 1);
-  obs[2] = Math.log(Math.max(0, Math.min(y - radius * 0.5, 300)) + 1);
-  obs[3] = Math.log(Math.max(0, Math.min(MAP_HEIGHT - y - radius * 0.5, 300)) + 1);
+  // vec[0-4]: vx, vy, log(radius), zone_index, invincibility_flag
+  vec[0] = Math.log(Math.abs(vx) + 1) * Math.sign(vx);
+  vec[1] = Math.log(Math.abs(vy) + 1) * Math.sign(vy);
+  vec[2] = Math.log(radius + 1);
+  vec[3] = Math.floor((MAP_HEIGHT - y) / MAP_HEIGHT * 5);
+  vec[4] = engine._totalTime < stone.invincibleUntil ? 1.0 : 0.0;
 
-  // [4-7] self
-  obs[4] = Math.log(Math.abs(vx) + 1) * Math.sign(vx);
-  obs[5] = Math.log(Math.abs(vy) + 1) * Math.sign(vy);
-  obs[6] = Math.log(Math.abs(radius) + 1);
-  obs[7] = Math.floor((MAP_HEIGHT - y) / MAP_HEIGHT * 5);
+  // Viewport/pixel mapping
+  const zoom       = getZoom(radius);
+  const pixelScale = zoom * IMG_SIZE / VP;   // world units → image pixels
 
-  // [8-27] fragments: 3 small (radius≤8) + 2 large (radius≥9), each (dx, dy, area, dist)
+  function worldToPixel(wx, wy) {
+    const px = Math.floor(IMG_SIZE / 2 + (wx - x) * pixelScale);
+    const py = Math.floor(IMG_SIZE / 2 + (wy - y) * pixelScale);
+    return { px, py };
+  }
+  function inBounds(px, py) { return px >= 0 && px < IMG_SIZE && py >= 0 && py < IMG_SIZE; }
+  function setPixel(ch, px, py, val) { img[ch * IMG_SIZE * IMG_SIZE + py * IMG_SIZE + px] = val; }
+
+  // Channel 0 (fragment area) + Channel 1 (fragment dist): 3 small + 2 large fragments
   const allFrags = engine.getFragmentsNear(x, y)
     .sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - ((b.x - x) ** 2 + (b.y - y) ** 2));
-  const smallFrags = allFrags.filter(f => f.radius <= 8);
-  const largeFrags = allFrags.filter(f => f.radius >= 9);
   const fragSlots = [
-    ...smallFrags.slice(0, 3),
-    ...largeFrags.slice(0, 2),
+    ...allFrags.filter(f => f.radius <= 8).slice(0, 3),
+    ...allFrags.filter(f => f.radius >= 9).slice(0, 2),
   ];
-  for (let i = 0; i < 5; i++) {
-    const f = fragSlots[i];
-    if (!f) continue;
-    const base = 8 + i * 4;
-    obs[base]     = Math.log(Math.abs(f.x - x) + 1) * Math.sign(f.x - x);
-    obs[base + 1] = Math.log(Math.abs(f.y - y) + 1) * Math.sign(f.y - y);
-    obs[base + 2] = Math.log(f.area + 1);
-    obs[base + 3] = Math.log(Math.max(0, Math.hypot(f.x - x, f.y - y) - radius) + 1);
+  for (const f of fragSlots) {
+    const { px, py } = worldToPixel(f.x, f.y);
+    if (!inBounds(px, py)) continue;
+    setPixel(0, px, py, Math.log(f.area + 1));
+    setPixel(1, px, py, Math.log(Math.max(0, Math.hypot(f.x - x, f.y - y) - radius) + 1));
   }
 
-  // [28-51] 4 nearest other alive stones (dx, dy, radius_ratio, dvx, dvy, dist)
-  const nearStones = [...engine.stones.values()]
-    .filter(s => s.id !== stoneId && s.alive)
-    .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
-  for (let i = 0; i < 4 && i < nearStones.length; i++) {
-    const s = nearStones[i];
-    const base = 28 + i * 6;
-    obs[base]     = Math.log(Math.abs(s.x - x) + 1) * Math.sign(s.x - x);
-    obs[base + 1] = Math.log(Math.abs(s.y - y) + 1) * Math.sign(s.y - y);
-    obs[base + 2] = Math.log(s.radius / radius);
-    obs[base + 3] = Math.log(Math.abs(s.vx - vx) + 1) * Math.sign(s.vx - vx);
-    obs[base + 4] = Math.log(Math.abs(s.vy - vy) + 1) * Math.sign(s.vy - vy);
-    obs[base + 5] = Math.log(Math.max(0, Math.hypot(s.x - x, s.y - y) - s.radius - radius) + 1);
+  // Channels 2-5: all visible stones (ch2=radius_ratio, ch3=dvx, ch4=dvy, ch5=dist)
+  for (const s of engine.stones.values()) {
+    if (s.id === stoneId || !s.alive) continue;
+    const { px, py } = worldToPixel(s.x, s.y);
+    if (!inBounds(px, py)) continue;
+    setPixel(2, px, py, Math.log(s.radius / radius));
+    setPixel(3, px, py, Math.log(Math.abs(s.vx - vx) + 1) * Math.sign(s.vx - vx));
+    setPixel(4, px, py, Math.log(Math.abs(s.vy - vy) + 1) * Math.sign(s.vy - vy));
+    setPixel(5, px, py, Math.log(Math.max(0, Math.hypot(s.x - x, s.y - y) - s.radius - radius) + 1));
   }
 
-  // [52-60] 3 nearest gears
-  const nearGears = [...engine.gears]
-    .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
-  for (let i = 0; i < 3 && i < nearGears.length; i++) {
-    const g = nearGears[i];
-    const base = 52 + i * 3;
-    const distance = Math.max(0.01, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius);
-    const x_distance = Math.abs(g.x - x) * distance / Math.hypot(x - g.x, y - g.y);
-    const y_distance = Math.abs(g.y - y) * distance / Math.hypot(x - g.x, y - g.y);
-    obs[base]     = Math.log(x_distance + 1) * Math.sign(g.x - x);
-    obs[base + 1] = Math.log(y_distance + 1) * Math.sign(g.y - y);
-    obs[base + 2] = Math.log(distance + 1);
+  // Channel 6: gear distance (sparse, center pixel only)
+  for (const g of engine.gears) {
+    const { px, py } = worldToPixel(g.x, g.y);
+    if (!inBounds(px, py)) continue;
+    const dist = Math.max(0.01, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius);
+    setPixel(6, px, py, Math.log(dist + 1));
   }
 
-  // [61] spawn invincibility flag
-  obs[61] = engine._totalTime < stone.invincibleUntil ? 1.0 : 0.0;
+  // Channel 7: danger zone (dense)
+  // Map boundary strips
+  const leftEnd   = Math.ceil(IMG_SIZE / 2 - x * pixelScale);
+  const rightStart = Math.floor(IMG_SIZE / 2 + (MAP_WIDTH - x) * pixelScale);
+  const topEnd    = Math.ceil(IMG_SIZE / 2 - y * pixelScale);
+  const botStart  = Math.floor(IMG_SIZE / 2 + (MAP_HEIGHT - y) * pixelScale);
+  const ch7base   = 7 * IMG_SIZE * IMG_SIZE;
+  for (let py = 0; py < IMG_SIZE; py++) {
+    for (let px = 0; px < IMG_SIZE; px++) {
+      if (px < leftEnd || px >= rightStart || py < topEnd || py >= botStart) {
+        img[ch7base + py * IMG_SIZE + px] = 1.0;
+      }
+    }
+  }
+  // Gear danger circles
+  for (const g of engine.gears) {
+    const dangerPxR = (radius + g.collisionRadius) * pixelScale;
+    const { px: cx, py: cy } = worldToPixel(g.x, g.y);
+    const minPx = Math.max(0,         Math.floor(cx - dangerPxR));
+    const maxPx = Math.min(IMG_SIZE - 1, Math.ceil(cx  + dangerPxR));
+    const minPy = Math.max(0,         Math.floor(cy - dangerPxR));
+    const maxPy = Math.min(IMG_SIZE - 1, Math.ceil(cy  + dangerPxR));
+    for (let py = minPy; py <= maxPy; py++) {
+      for (let px = minPx; px <= maxPx; px++) {
+        if ((px - cx) ** 2 + (py - cy) ** 2 <= dangerPxR ** 2) {
+          img[ch7base + py * IMG_SIZE + px] = 1.0;
+        }
+      }
+    }
+  }
 
-  return obs;
+  return { vec, img };
 }
 
 function buildObsAll() {
   const observations = {};
   for (let i = 0; i < agentIds.length; i++) {
-    observations[`agent_${i}`] = buildObs(agentIds[i]);
+    const { vec, img } = buildObs(agentIds[i]);
+    observations[`agent_${i}`] = { vec: Array.from(vec), img: Array.from(img) };
   }
   return observations;
 }
@@ -224,7 +255,8 @@ const server = http.createServer((req, res) => {
             reward = 0.0;
           }
 
-          observations[key] = buildObs(id);
+          const { vec: ov, img: oi } = buildObs(id);
+          observations[key] = { vec: Array.from(ov), img: Array.from(oi) };
           rewards[key]      = Math.max(-10, Math.min(10, reward));
           terminated[key]   = died;
           truncated[key]    = false;
