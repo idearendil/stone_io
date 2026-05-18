@@ -18,7 +18,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 from network import Actor
 
-OBS_DIM = 62
+OBS_DIM = 110
 ACT_DIM = 3
 
 

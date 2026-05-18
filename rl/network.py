@@ -10,7 +10,7 @@ def _ortho(layer, gain: float = 1.0) -> nn.Linear:
 
 
 class Actor(nn.Module):
-    def __init__(self, obs_dim: int = 62, act_dim: int = 3):
+    def __init__(self, obs_dim: int = 110, act_dim: int = 3):
         super().__init__()
         self.obs_dim = obs_dim
         self.act_dim = act_dim
@@ -62,19 +62,19 @@ class Actor(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self, obs_dim: int = 62, n_quantiles: int = 51):
+    def __init__(self, obs_dim: int = 110, n_quantiles: int = 51):
         super().__init__()
         self.obs_dim = obs_dim
         self.n_quantiles = n_quantiles
 
         self.shared_mlp = nn.Sequential(
-            _ortho(nn.Linear(obs_dim, 256)),
-            nn.LayerNorm(256),
+            _ortho(nn.Linear(obs_dim, 512)),
+            nn.LayerNorm(512),
             nn.ReLU(),
-            _ortho(nn.Linear(256, 256)),
+            _ortho(nn.Linear(512, 512)),
             nn.ReLU(),
         )
-        self.critic_head = _ortho(nn.Linear(256, n_quantiles), gain=1.0)
+        self.critic_head = _ortho(nn.Linear(512, n_quantiles), gain=1.0)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         return self.critic_head(self.shared_mlp(obs))  # (*, n_quantiles)

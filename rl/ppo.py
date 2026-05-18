@@ -11,7 +11,7 @@ from network import Actor, Critic
 # Hyperparameters
 # ------------------------------------------------------------------
 CLIP_EPSILON      = 0.2
-ENTROPY_COEF      = 0.015
+ENTROPY_COEF      = 0.02
 GAMMA             = 0.99
 GAE_LAMBDA        = 0.95
 N_EPOCHS          = 4
@@ -147,7 +147,7 @@ class RolloutBuffer:
 class PPOAgent:
     def __init__(
         self,
-        obs_dim:     int   = 62,
+        obs_dim:     int   = 110,
         act_dim:     int   = 3,
         lr:          float = LR,
         total_steps: int   = 50_000_000,

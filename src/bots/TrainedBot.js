@@ -46,11 +46,11 @@ export class TrainedBot {
   // ---------------------------------------------------------------------------
   // Observation builder — must match HeadlessServer.js buildObs exactly
   // [0-3] wall log-dists  [4-7] self  [8-27] 5 frags×4
-  // [28-51] 4 stones×6   [52-60] 3 gears×3
+  // [28-63] 6 stones×6   [64-108] 15 gears×3
   // ---------------------------------------------------------------------------
 
   _buildObs(stone, engine) {
-    const obs = new Float32Array(62);
+    const obs = new Float32Array(110);
     const { MAP_WIDTH, MAP_HEIGHT } = engine.config;
     const { x, y, vx, vy, radius } = stone;
 
@@ -85,11 +85,11 @@ export class TrainedBot {
       obs[base + 3] = Math.log(Math.max(0, Math.hypot(f.x - x, f.y - y) - radius) + 1);
     }
 
-    // [28-51] 4 nearest other alive stones (dx, dy, radius_ratio, dvx, dvy, dist)
+    // [28-63] 6 nearest other alive stones (dx, dy, radius_ratio, dvx, dvy, dist)
     const others = [...engine.stones.values()]
       .filter(s => s.id !== this.stoneId && s.alive)
       .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
-    for (let i = 0; i < 4 && i < others.length; i++) {
+    for (let i = 0; i < 6 && i < others.length; i++) {
       const s    = others[i];
       const base = 28 + i * 6;
       obs[base]     = Math.log(Math.abs(s.x - x) + 1) * Math.sign(s.x - x);
@@ -100,12 +100,12 @@ export class TrainedBot {
       obs[base + 5] = Math.log(Math.max(0, Math.hypot(s.x - x, s.y - y) - s.radius - radius) + 1);
     }
 
-    // [52-60] 3 nearest gears
+    // [64-108] 15 nearest gears
     const gears = [...engine.gears]
       .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
-    for (let i = 0; i < 3 && i < gears.length; i++) {
+    for (let i = 0; i < 15 && i < gears.length; i++) {
       const g    = gears[i];
-      const base = 52 + i * 3;
+      const base = 64 + i * 3;
       const distance = Math.max(0.01, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius);
       const x_distance = Math.abs(g.x - x) * distance / Math.hypot(x - g.x, y - g.y);
       const y_distance = Math.abs(g.y - y) * distance / Math.hypot(x - g.x, y - g.y);
@@ -114,8 +114,8 @@ export class TrainedBot {
       obs[base + 2] = Math.log(distance + 1);
     }
 
-    // [61] spawn invincibility flag
-    obs[61] = engine._totalTime < stone.invincibleUntil ? 1.0 : 0.0;
+    // [109] spawn invincibility flag
+    obs[109] = engine._totalTime < stone.invincibleUntil ? 1.0 : 0.0;
 
     return obs;
   }

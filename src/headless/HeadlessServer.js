@@ -6,7 +6,7 @@ const PORT       = Number(process.env.PORT       ?? 7777);
 const NUM_AGENTS = Number(process.env.NUM_AGENTS  ?? 1);
 const NUM_BOTS   = Number(process.env.NUM_BOTS    ?? 0);
 
-const OBS_SIZE = 62;
+const OBS_SIZE = 110;
 
 // Mutable config shared with engine (engine stores the same reference)
 const config = { ...CONFIG, ZONES: CONFIG.ZONES };
@@ -19,6 +19,8 @@ let agentIds = [];
 const prevAreas = new Map();
 /** stoneId -> {dx, dy} direction from previous step */
 const prevDirs = new Map();
+/** stoneId -> circular position history (last 100 frames) */
+const posHistory = new Map();
 
 // ---------------------------------------------------------------------------
 // Observation builder
@@ -35,10 +37,10 @@ function buildObs(stoneId) {
   // [0-3] log distances to map edges (normalized by log of map dimensions)
   const logW = Math.log(MAP_WIDTH);
   const logH = Math.log(MAP_HEIGHT);
-  obs[0] = Math.log(Math.max(0, Math.min(x - radius * 0.5, 300)) + 1);
-  obs[1] = Math.log(Math.max(0, Math.min(MAP_WIDTH - x - radius * 0.5, 300)) + 1);
-  obs[2] = Math.log(Math.max(0, Math.min(y - radius * 0.5, 300)) + 1);
-  obs[3] = Math.log(Math.max(0, Math.min(MAP_HEIGHT - y - radius * 0.5, 300)) + 1);
+  obs[0] = Math.log(301) - Math.log(Math.max(0, Math.min(x - radius * 0.5, 300)) + 1);
+  obs[1] = Math.log(301) - Math.log(Math.max(0, Math.min(MAP_WIDTH - x - radius * 0.5, 300)) + 1);
+  obs[2] = Math.log(301) - Math.log(Math.max(0, Math.min(y - radius * 0.5, 300)) + 1);
+  obs[3] = Math.log(301) - Math.log(Math.max(0, Math.min(MAP_HEIGHT - y - radius * 0.5, 300)) + 1);
 
   // [4-7] self
   obs[4] = Math.log(Math.abs(vx) + 1) * Math.sign(vx);
@@ -65,11 +67,11 @@ function buildObs(stoneId) {
     obs[base + 3] = Math.log(Math.max(0, Math.hypot(f.x - x, f.y - y) - radius) + 1);
   }
 
-  // [28-51] 4 nearest other alive stones (dx, dy, radius_ratio, dvx, dvy, dist)
+  // [28-63] 6 nearest other alive stones (dx, dy, radius_ratio, dvx, dvy, dist)
   const nearStones = [...engine.stones.values()]
     .filter(s => s.id !== stoneId && s.alive)
     .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
-  for (let i = 0; i < 4 && i < nearStones.length; i++) {
+  for (let i = 0; i < 6 && i < nearStones.length; i++) {
     const s = nearStones[i];
     const base = 28 + i * 6;
     obs[base]     = Math.log(Math.abs(s.x - x) + 1) * Math.sign(s.x - x);
@@ -77,25 +79,25 @@ function buildObs(stoneId) {
     obs[base + 2] = Math.log(s.radius / radius);
     obs[base + 3] = Math.log(Math.abs(s.vx - vx) + 1) * Math.sign(s.vx - vx);
     obs[base + 4] = Math.log(Math.abs(s.vy - vy) + 1) * Math.sign(s.vy - vy);
-    obs[base + 5] = Math.log(Math.max(0, Math.hypot(s.x - x, s.y - y) - s.radius - radius) + 1);
+    obs[base + 5] = Math.log(1001) - Math.log(Math.max(0, Math.min(1000, Math.hypot(s.x - x, s.y - y) - s.radius - radius)) + 1);
   }
 
-  // [52-60] 3 nearest gears
+  // [64-108] 15 nearest gears
   const nearGears = [...engine.gears]
     .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
-  for (let i = 0; i < 3 && i < nearGears.length; i++) {
+  for (let i = 0; i < 15 && i < nearGears.length; i++) {
     const g = nearGears[i];
-    const base = 52 + i * 3;
+    const base = 64 + i * 3;
     const distance = Math.max(0.01, Math.hypot(x - g.x, y - g.y) - radius - g.collisionRadius);
     const x_distance = Math.abs(g.x - x) * distance / Math.hypot(x - g.x, y - g.y);
     const y_distance = Math.abs(g.y - y) * distance / Math.hypot(x - g.x, y - g.y);
     obs[base]     = Math.log(x_distance + 1) * Math.sign(g.x - x);
     obs[base + 1] = Math.log(y_distance + 1) * Math.sign(g.y - y);
-    obs[base + 2] = Math.log(distance + 1);
+    obs[base + 2] = Math.log(1001) - Math.log(Math.min(1000, distance) + 1);
   }
 
-  // [61] spawn invincibility flag
-  obs[61] = engine._totalTime < stone.invincibleUntil ? 1.0 : 0.0;
+  // [109] spawn invincibility flag
+  obs[109] = engine._totalTime < stone.invincibleUntil ? 1.0 : 0.0;
 
   return obs;
 }
@@ -132,10 +134,12 @@ function resetEngine() {
   );
   for (let i = 0; i < initCount; i++) engine._spawnInitialFragments();
 
+  posHistory.clear();
   for (const id of agentIds) {
     const stone = engine.stones.get(id);
     prevAreas.set(id, stone ? stone.area : 0);
     prevDirs.set(id, { dx: 0, dy: 0 });
+    posHistory.set(id, []);
   }
 }
 
@@ -205,6 +209,17 @@ const server = http.createServer((req, res) => {
           const currArea = stone ? stone.area : 0;
           const died = wasAlive.get(id) && !alive;
 
+          // Position history: get 100-frame-ago position before updating
+          const history = posHistory.get(id) ?? [];
+          const pos100ago = history.length >= 100 ? history[0] : null;
+          if (alive) {
+            history.push({ x: stone.x, y: stone.y });
+            if (history.length > 100) history.shift();
+          } else {
+            history.length = 0;
+          }
+          posHistory.set(id, history);
+
           let reward;
           if (died) {
             reward = -1000.0;
@@ -220,6 +235,12 @@ const server = http.createServer((req, res) => {
             // reward += ((velocity - 0.8) * 0.0 - dirDist * 0.0);
             const velocity = Math.hypot(stone.vx, stone.vy);
             reward += Math.log(velocity + 1) * 0.01;
+
+            // Anti-camp penalty: penalize staying near the same position 100 frames ago
+            if (pos100ago) {
+              const dist = Math.hypot(stone.x - pos100ago.x, stone.y - pos100ago.y);
+              reward -= 0.1 * (Math.log(100) - Math.log(dist + 1));
+            }
           } else {
             reward = 0.0;
           }
