@@ -49,7 +49,12 @@ ACTION_REPEAT = 3
 
 def _env_worker(worker_id: int, env_kwargs: dict, pipe: mp.connection.Connection) -> None:
     """Runs in a child process. Owns a StoneEnv + Node server."""
-    env = StoneEnv(**env_kwargs)
+    try:
+        env = StoneEnv(**env_kwargs)
+        pipe.send(('ready', None))
+    except Exception as e:
+        pipe.send(('error', e))
+        return
     try:
         while True:
             cmd, payload = pipe.recv()
@@ -88,6 +93,11 @@ class ParallelEnv:
             p.start()
             self._parent_pipes.append(parent)
             self._procs.append(p)
+
+        for i, pipe in enumerate(self._parent_pipes):
+            msg = pipe.recv()
+            if isinstance(msg, tuple) and msg[0] == 'error':
+                raise RuntimeError(f'Worker {i} failed to initialize') from msg[1]
 
     def reset(self) -> list[dict]:
         for pipe in self._parent_pipes:
