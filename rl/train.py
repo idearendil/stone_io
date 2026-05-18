@@ -301,6 +301,8 @@ def train(args: argparse.Namespace) -> None:
             obs_dicts = new_obs_dicts
             total_steps_done += A * E * ACTION_REPEAT
 
+        print(f'total_steps_done: {total_steps_done}')
+
         # ---- bootstrap last values ----
         last_obs_batch = np.stack([
             obs_dicts[e][f'agent_{i}']
@@ -330,6 +332,8 @@ def train(args: argparse.Namespace) -> None:
                     buf_quantiles[:, e, i],
                     last_quantiles_flat[e, i],
                 )
+
+        print('calculating returns over!')
 
         # ---- PPO update ----
         loss_dict = agent.update(
@@ -399,6 +403,9 @@ def train(args: argparse.Namespace) -> None:
                 f'actor_lr={lr_now:.2e}  '
                 f'elapsed={elapsed:.0f}s'
             )
+
+
+        print('training over!')
 
     # ---- final save ----
     final_path = os.path.join(args.checkpoint_dir, 'final.pt')
