@@ -5,7 +5,8 @@ import * as Physics from './Physics.js';
 import { RuleBasedBot } from '../bots/RuleBasedBot.js';
 import { TrainedBot } from '../bots/TrainedBot.js';
 
-const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#e91e63'];
+// Deep jewel tones — premium marble look, no bright primaries
+const COLORS = ['#2C3E6E', '#6E2C3E', '#2C6E3E', '#6E5A2C', '#4A2C6E', '#2C5A6E', '#6E3A2C', '#3E6E2C'];
 
 export class GameEngine {
   constructor(config) {
@@ -26,6 +27,7 @@ export class GameEngine {
     this.fragments = [];
     this._inputs = new Map();
     this._boostCooldowns = new Map();
+    this._pendingBoosts = new Set();
     this._spawnTimer = 0;
     this._events = [];
     this.gears = new MapGenerator(this._mapSeed).generateGears(this.config);
@@ -165,6 +167,16 @@ export class GameEngine {
     return true;
   }
 
+  /**
+   * Queue a boost to be applied inside the next step(). Use this (instead of
+   * calling boost() directly) when triggering from outside the step loop — e.g.
+   * a key handler — so the resulting 'boost' event survives into that step's
+   * snapshot rather than being wiped by the per-step event reset.
+   */
+  requestBoost(stoneId) {
+    this._pendingBoosts.add(stoneId);
+  }
+
   /** Store mouse intent; applied at next step(). Coordinates are relative to the player's viewport. */
   setInput(stoneId, mouseX, mouseY, viewportW, viewportH) {
     this._inputs.set(stoneId, { mouseX, mouseY, viewportW, viewportH });
@@ -212,6 +224,13 @@ export class GameEngine {
       }
     }
 
+    // Apply boosts queued from outside the loop (e.g. player key press) so their
+    // events land in this step's snapshot.
+    if (this._pendingBoosts.size > 0) {
+      for (const id of this._pendingBoosts) this.boost(id);
+      this._pendingBoosts.clear();
+    }
+
     // Respawn dead stones after their 2-second delay
     for (const stone of this.stones.values()) {
       if (!stone.alive && stone.respawnAt !== null && this._totalTime >= stone.respawnAt) {
@@ -248,14 +267,14 @@ export class GameEngine {
 
       // Wall collision
       if (stone.x - stone.radius * 0.5 < 0) {
-        this._killStone(stone);
+        this._killStone(stone, 'wall');
       } else if (stone.x + stone.radius * 0.5 > this.config.MAP_WIDTH) {
-        this._killStone(stone);
+        this._killStone(stone, 'wall');
       }
       if (stone.y - stone.radius * 0.5 < 0) {
-        this._killStone(stone);
+        this._killStone(stone, 'wall');
       } else if (stone.y + stone.radius * 0.5 > this.config.MAP_HEIGHT) {
-        this._killStone(stone);
+        this._killStone(stone, 'wall');
       }
     }
 
@@ -266,7 +285,7 @@ export class GameEngine {
         const a = alive[i], b = alive[j];
         if (Math.hypot(b.x - a.x, b.y - a.y) < a.radius + b.radius) {
           Physics.resolveStoneCollision(a, b, this.config.RESTITUTION, this.config.COLLISION_FRICTION);
-          this._events.push({ type: 'collision' });
+          this._events.push({ type: 'collision', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
         }
       }
     }
@@ -309,7 +328,7 @@ export class GameEngine {
         if (absorbed.has(frag)) continue;
         if (Math.hypot(stone.x - frag.x, stone.y - frag.y) < stone.radius + frag.radius) {
           stone.absorb(frag.area);
-          this._events.push({ type: 'absorb', x: frag.x, y: frag.y });
+          this._events.push({ type: 'absorb', x: frag.x, y: frag.y, color: frag.color });
           absorbed.add(frag);
         }
       }
@@ -354,9 +373,10 @@ export class GameEngine {
   // Internal helpers
   // ---------------------------------------------------------------------------
 
-  _killStone(stone) {
+  _killStone(stone, cause = 'gear') {
     stone.alive = false;
     stone.respawnAt = this._totalTime + 2000;
+    this._events.push({ type: 'death', stoneId: stone.id, x: stone.x, y: stone.y, color: stone.color, cause });
     let fragment_spawned = 1;
     const basic_radius = stone.radius ** (3/4);
     const target = Math.ceil(stone.radius);
@@ -365,7 +385,7 @@ export class GameEngine {
       if (++attempts > target * 20) break;
 
       const angle = Math.random() * 2 * Math.PI;
-      const speed = 1 + Math.random() * 2;
+      const speed = 3 + Math.random() * 2;
       const radius = basic_radius + basic_radius * 1.0 * (Math.random() * 2 - 1);
       const fx = stone.x + Math.cos(angle) * stone.radius;
       const fy = stone.y + Math.sin(angle) * stone.radius;
@@ -380,7 +400,7 @@ export class GameEngine {
       fragment_spawned++;
 
       // Grid cell is assigned from spawn position and never updated.
-      // Death fragments drift at most ~30 world units (speed 1-3, friction 0.9/frame).
+      // Death fragments drift at most ~20 world units (speed 3-5, friction 0.8/frame).
       this._addFragment(new Fragment(fx, fy, radius,
         Math.cos(angle) * speed, Math.sin(angle) * speed,
         this.config.FRAGMENT_LIFETIME, stone.color,

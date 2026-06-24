@@ -1,9 +1,23 @@
 import { Camera } from './Camera.js';
 import { Minimap } from './Minimap.js';
 import { DebugOverlay } from './DebugOverlay.js';
+import { ParticleSystem } from './ParticleSystem.js';
 
-const ZONE_COLORS = ['#1A0F05', '#3D250F', '#7A4F20', '#B07A3A', '#D4A860'];
-const GRAIN_SPACING = 18; // world-px between wood grain lines
+const TAU = Math.PI * 2;
+
+// Per-zone wood aesthetic: base lacquer colour + grain line styling.
+// Zone 0 (top) = darkest ebony, zone 4 (bottom) = light maple.
+const ZONE_STYLE = [
+  { base: '#1A0F05', grainSpacing: 12, grainColor: '#241507', grainOpacity: 0.6  },
+  { base: '#3D250F', grainSpacing: 15, grainColor: '#4E3218', grainOpacity: 0.5  },
+  { base: '#7A4F20', grainSpacing: 18, grainColor: '#8F6030', grainOpacity: 0.45 },
+  { base: '#B07A3A', grainSpacing: 20, grainColor: '#C08A4A', grainOpacity: 0.4  },
+  { base: '#D4A860', grainSpacing: 22, grainColor: '#E0B870', grainOpacity: 0.35 },
+];
+// Width (px) of the pre-rendered wood texture per zone. The full map is huge
+// (8000×16000), so each zone is rendered once at this fixed resolution and
+// stretched to fit on screen via drawImage — premium look, one-time cost.
+const WOOD_TEX_W = 1600;
 
 const MINIMAP_W = 200;
 const MINIMAP_H = 160;
@@ -19,7 +33,16 @@ export class Renderer {
     this._debugOverlay = new DebugOverlay(config);
     this._debugEnabled = false;
     this._time = 0;
-    this._effects = []; // absorption pulse effects
+
+    this.particles = new ParticleSystem();
+    this.soundEngine = null;
+    this._playerZone = null;        // last zone the player occupied (zone-cross detection)
+    this._zoneCanvases = null;      // pre-rendered wood textures, one per zone
+    this._zoneTexH = null;          // zone height the textures were built for
+  }
+
+  setSoundEngine(soundEngine) {
+    this.soundEngine = soundEngine;
   }
 
   toggleDebug() {
@@ -36,27 +59,25 @@ export class Renderer {
   /** Main draw call — invoke once per rAF frame. timestamp is the rAF DOMHighResTimeStamp. */
   render(gameState, myStoneId, timestamp = performance.now()) {
     this._time = timestamp;
+    const dt = gameState._deltaMS ?? 16;
     const myStone = gameState.stones.find(s => s.id === myStoneId) || null;
 
     if (myStone) this.camera.update(myStone.x, myStone.y, myStone.radius);
 
-    // Collect absorption effects from events
-    if (gameState.events) {
-      for (const ev of gameState.events) {
-        if (ev.type === 'absorb') {
-          this._effects.push({ x: ev.x, y: ev.y, startTime: timestamp, duration: 200 });
-        }
-      }
-    }
-
     const { ctx, camera } = this;
+
+    // Engine events → cosmetic particles + procedural sound (on-screen only)
+    this._processEvents(gameState.events, camera, gameState.stones, myStoneId);
+    this._checkZoneCross(myStone);
+    this.particles.update(dt, gameState.stones);
+
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     this._drawBackground(camera);
     this._drawGears(gameState.gears, camera);
     this._drawFragments(gameState.fragments, camera);
     this._drawStones(gameState.stones, camera, myStoneId);
-    this._drawEffects(camera, timestamp);
+    this.particles.draw(ctx, camera);
     this._drawHUD(gameState, myStoneId);
     this.minimap.draw(ctx, gameState, myStoneId, camera, this.canvas.width, this.canvas.height);
     this._drawScoreboard(gameState, myStoneId);
@@ -66,13 +87,129 @@ export class Renderer {
   }
 
   // ---------------------------------------------------------------------------
+  // Events → particles + sound
+  // ---------------------------------------------------------------------------
+
+  _processEvents(events, camera, stones, myStoneId) {
+    if (!events) return;
+    const se = this.soundEngine;
+    for (const ev of events) {
+      // Boost comet tail — look up the stone for its position + velocity
+      if (ev.type === 'boost') {
+        const s = stones && stones.find(st => st.id === ev.stoneId);
+        if (s && s.alive && camera.isVisible(s.x, s.y, s.radius * 4)) {
+          this.particles.boostTail(s.id, s.x, s.y, s.vx, s.vy, s.radius);
+        }
+        continue;
+      }
+
+      // Only react to effects on (or near) the visible screen — keeps the
+      // particle budget and sound spam confined to what the player can see.
+      const near = ev.x == null || camera.isVisible(ev.x, ev.y, 40);
+      if (!near) continue;
+
+      if (ev.type === 'absorb') {
+        this.particles.absorb(ev.x, ev.y, ev.color || '#ffe9a8');
+        if (se) se.absorb();
+      } else if (ev.type === 'death') {
+        this.particles.death(ev.x, ev.y, ev.color || '#cc5555');
+        if (se) (ev.stoneId === myStoneId ? se.playerDeath() : se.death());
+      } else if (ev.type === 'collision') {
+        this.particles.collision(ev.x, ev.y);
+        if (se) se.collision();
+      }
+    }
+  }
+
+  _checkZoneCross(myStone) {
+    if (!myStone || !myStone.alive) { this._playerZone = null; return; }
+    const { MAP_HEIGHT, ZONES } = this.config;
+    const zoneH = MAP_HEIGHT / ZONES.length;
+    const z = Math.min(ZONES.length - 1, Math.max(0, Math.floor(myStone.y / zoneH)));
+    if (this._playerZone !== null && z !== this._playerZone) {
+      this.particles.zoneEntry(myStone.x, myStone.y);
+      if (this.soundEngine) this.soundEngine.zoneCross();
+    }
+    this._playerZone = z;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Colour helpers
+  // ---------------------------------------------------------------------------
+
+  _parseHex(hex) {
+    let h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+
+  _darken(hex, f) {
+    const { r, g, b } = this._parseHex(hex);
+    return `rgb(${Math.round(r * f)},${Math.round(g * f)},${Math.round(b * f)})`;
+  }
+
+  _hexToRgba(hex, a) {
+    const { r, g, b } = this._parseHex(hex);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  // ---------------------------------------------------------------------------
   // Background
   // ---------------------------------------------------------------------------
+
+  /**
+   * Pre-render one wood texture per zone onto an offscreen canvas. Each is a
+   * full-map-width strip of lacquered wood with bezier grain lines, built once
+   * and reused — only rebuilt if the zone height changes (e.g. config edit).
+   */
+  _buildZoneTextures(zoneH) {
+    const { MAP_WIDTH } = this.config;
+    const scale = WOOD_TEX_W / MAP_WIDTH;
+    const texW = WOOD_TEX_W;
+    const texH = Math.max(1, Math.round(zoneH * scale));
+
+    this._zoneCanvases = ZONE_STYLE.map((style) => {
+      const c = document.createElement('canvas');
+      c.width = texW;
+      c.height = texH;
+      const g = c.getContext('2d');
+
+      // Base lacquer fill
+      g.fillStyle = style.base;
+      g.fillRect(0, 0, texW, texH);
+
+      // Wood grain — horizontal bezier curves with two slightly-offset control
+      // points for a natural, hand-finished look.
+      const spacing = Math.max(2, style.grainSpacing * scale);
+      g.lineWidth = 0.8;
+      for (let y = -spacing; y < texH + spacing; y += spacing) {
+        const yy   = y + (Math.random() * 2 - 1) * spacing * 0.3;
+        const off1 = (Math.random() * 2 - 1) * 3;
+        const off2 = (Math.random() * 2 - 1) * 3;
+        const op   = style.grainOpacity * (0.5 + Math.random() * 0.5);
+        g.strokeStyle = this._hexToRgba(style.grainColor, op.toFixed(3));
+        g.beginPath();
+        g.moveTo(0, yy);
+        g.bezierCurveTo(
+          texW * 0.33, yy + off1,
+          texW * 0.66, yy + off2,
+          texW,        yy + (off1 + off2) * 0.3,
+        );
+        g.stroke();
+      }
+      return c;
+    });
+    this._zoneTexH = zoneH;
+  }
 
   _drawBackground(camera) {
     const ctx = this.ctx;
     const { MAP_WIDTH, MAP_HEIGHT, ZONES } = this.config;
     const zoneH = MAP_HEIGHT / ZONES.length;
+
+    if (!this._zoneCanvases || this._zoneTexH !== zoneH) this._buildZoneTextures(zoneH);
+
     const worldTop    = camera.y - camera.viewportH * 0.5 / camera.zoom;
     const worldBottom = camera.y + camera.viewportH * 0.5 / camera.zoom;
 
@@ -80,52 +217,55 @@ export class Renderer {
     ctx.fillStyle = '#0a0808';
     ctx.fillRect(0, 0, camera.viewportW, camera.viewportH);
 
-    for (let z = 0; z < ZONE_COLORS.length; z++) {
+    // Horizontal screen span of the playfield, clamped to the viewport
+    const sxLeft  = camera.worldToScreen(0, 0).sx;
+    const sxRight = camera.worldToScreen(MAP_WIDTH, 0).sx;
+    const fullW   = sxRight - sxLeft;
+    const drawX   = Math.max(0, sxLeft);
+    const drawW   = Math.min(camera.viewportW, sxRight) - drawX;
+    if (fullW <= 0 || drawW <= 0) return;
+
+    const uLeft  = (drawX - sxLeft) / fullW;
+    const uRight = (drawX + drawW - sxLeft) / fullW;
+
+    for (let z = 0; z < ZONE_STYLE.length; z++) {
       const zTop    = z * zoneH;
       const zBottom = (z + 1) * zoneH;
       if (zBottom < worldTop || zTop > worldBottom) continue;
 
-      const { sy: sTop    } = camera.worldToScreen(0, Math.max(zTop, worldTop));
-      const { sy: sBottom } = camera.worldToScreen(0, Math.min(zBottom, worldBottom));
+      const sTop    = camera.worldToScreen(0, zTop).sy;
+      const sBottom = camera.worldToScreen(0, zBottom).sy;
+      const dstTop    = Math.max(sTop, -2);
+      const dstBottom = Math.min(sBottom, camera.viewportH + 2);
+      if (dstBottom <= dstTop) continue;
 
-      // Zone fill
-      ctx.fillStyle = ZONE_COLORS[z];
-      ctx.fillRect(0, sTop, camera.viewportW, sBottom - sTop);
+      const tex = this._zoneCanvases[z];
+      const vTop    = (dstTop - sTop)    / (sBottom - sTop);
+      const vBottom = (dstBottom - sTop) / (sBottom - sTop);
 
-      // Wood grain — horizontal quadratic beziers spaced every GRAIN_SPACING world-px
-      const firstY = Math.floor(Math.max(zTop, worldTop) / GRAIN_SPACING) * GRAIN_SPACING;
-      for (let wy = firstY; wy < Math.min(zBottom, worldBottom); wy += GRAIN_SPACING) {
-        const { sy } = camera.worldToScreen(0, wy);
-        const curve  = Math.sin(wy * 0.031) * 5;
-        const opacity = 0.025 + (Math.sin(wy * 0.11) * 0.5 + 0.5) * 0.035;
-        ctx.strokeStyle = `rgba(255,200,120,${opacity.toFixed(3)})`;
-        ctx.lineWidth = 0.6;
-        ctx.beginPath();
-        ctx.moveTo(0, sy);
-        ctx.quadraticCurveTo(camera.viewportW * 0.5, sy + curve, camera.viewportW, sy - curve * 0.5);
-        ctx.stroke();
-      }
-
-      // Zone boundary — thin golden line
-      if (z < ZONE_COLORS.length - 1) {
-        const { sy: bY } = camera.worldToScreen(0, zBottom);
-        if (bY >= -1 && bY <= camera.viewportH + 1) {
-          ctx.strokeStyle = '#C8A84B';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(0, bY);
-          ctx.lineTo(camera.viewportW, bY);
-          ctx.stroke();
-        }
-      }
+      ctx.drawImage(
+        tex,
+        uLeft * tex.width, vTop * tex.height,
+        Math.max(1, (uRight - uLeft) * tex.width), Math.max(1, (vBottom - vTop) * tex.height),
+        drawX, dstTop, drawW, dstBottom - dstTop,
+      );
     }
 
-    // Left / right out-of-bounds bars (only visible when near map edge)
-    const { sx: leftEdge  } = camera.worldToScreen(0, 0);
-    const { sx: rightEdge } = camera.worldToScreen(MAP_WIDTH, 0);
-    ctx.fillStyle = '#0a0808';
-    if (leftEdge  > 0) ctx.fillRect(0, 0, leftEdge, camera.viewportH);
-    if (rightEdge < camera.viewportW) ctx.fillRect(rightEdge, 0, camera.viewportW - rightEdge, camera.viewportH);
+    // Golden zone boundaries with a soft glow (screen space, cheap)
+    ctx.save();
+    ctx.strokeStyle = '#C8A84B';
+    ctx.shadowColor = 'rgba(200,168,75,0.9)';
+    ctx.shadowBlur = 4;
+    ctx.lineWidth = 2;
+    for (let z = 1; z < ZONE_STYLE.length; z++) {
+      const by = camera.worldToScreen(0, z * zoneH).sy;
+      if (by < -2 || by > camera.viewportH + 2) continue;
+      ctx.beginPath();
+      ctx.moveTo(drawX, by);
+      ctx.lineTo(drawX + drawW, by);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // ---------------------------------------------------------------------------
@@ -134,6 +274,9 @@ export class Renderer {
 
   _drawGears(gears, camera) {
     const ctx = this.ctx;
+    // Slow throb on the danger halo so gears read as "live" hazards
+    const pulse = 0.12 + 0.06 * (0.5 + 0.5 * Math.sin(this._time * 0.004));
+
     for (const gear of gears) {
       if (!camera.isVisible(gear.x, gear.y, gear.radius * 1.4)) continue;
       const { sx, sy } = camera.worldToScreen(gear.x, gear.y);
@@ -142,57 +285,92 @@ export class Renderer {
 
       ctx.save();
       ctx.translate(sx, sy);
+
+      // Pulsing red danger halo at the collision radius (drawn un-rotated)
+      const halo = ctx.createRadialGradient(0, 0, r * 0.6, 0, 0, r * 1.12);
+      halo.addColorStop(0, 'rgba(200,30,20,0)');
+      halo.addColorStop(1, `rgba(220,40,28,${pulse.toFixed(3)})`);
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 1.12, 0, TAU);
+      ctx.fillStyle = halo;
+      ctx.fill();
+
       ctx.rotate(gear.angle);
 
-      // Danger halo at collision radius (r * 1.05)
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 1.05, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,30,30,0.12)';
-      ctx.fill();
-
-      // Gear body + teeth
+      // Buzzsaw blade body — metallic radial gradient, sharp raked teeth
       this._buildGearPath(ctx, r, N);
-      ctx.fillStyle = '#888780';
+      const steel = ctx.createRadialGradient(-r * 0.35, -r * 0.35, r * 0.1, 0, 0, r * 1.28);
+      steel.addColorStop(0,    '#d2d5da');
+      steel.addColorStop(0.45, '#9296a0');
+      steel.addColorStop(0.8,  '#5c606a');
+      steel.addColorStop(1,    '#3a3d44');
+      ctx.fillStyle = steel;
       ctx.fill();
-      ctx.strokeStyle = '#555450';
-      ctx.lineWidth = 1.5;
+      ctx.lineJoin = 'miter';
+      ctx.miterLimit = 4;
+      ctx.strokeStyle = '#2c2f35';
+      ctx.lineWidth = Math.max(1, r * 0.04);
       ctx.stroke();
 
-      // Center bolt
+      // Inner hub ring
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.18, 0, Math.PI * 2);
-      ctx.fillStyle = '#2a2825';
+      ctx.arc(0, 0, r * 0.52, 0, TAU);
+      ctx.fillStyle = '#41444b';
       ctx.fill();
-      ctx.strokeStyle = '#555450';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#23262b';
+      ctx.lineWidth = Math.max(1, r * 0.05);
       ctx.stroke();
+
+      // Rivets around the hub
+      const rivets = 6;
+      for (let i = 0; i < rivets; i++) {
+        const a = (i / rivets) * TAU;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * r * 0.38, Math.sin(a) * r * 0.38, Math.max(1, r * 0.05), 0, TAU);
+        ctx.fillStyle = '#1f2125';
+        ctx.fill();
+      }
+
+      // Center bolt with a soft metal highlight
+      const bolt = ctx.createRadialGradient(-r * 0.05, -r * 0.05, r * 0.02, 0, 0, r * 0.2);
+      bolt.addColorStop(0, '#7a7e87');
+      bolt.addColorStop(1, '#1b1d21');
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.18, 0, TAU);
+      ctx.fillStyle = bolt;
+      ctx.fill();
 
       ctx.restore();
     }
   }
 
   /**
-   * Builds the gear path in the current rotated/translated context.
-   * N teeth as isoceles triangles pointing outward from a polygon body.
+   * Builds a circular-saw blade path in the current rotated/translated context.
+   * Each tooth has a curved leading edge sweeping out to a forward-raked sharp
+   * tip, then a steep straight trailing edge back to the next valley (the hook).
    */
   _buildGearPath(ctx, radius, N) {
-    const period    = (Math.PI * 2) / N;
-    const innerR    = radius * 0.80;
-    const outerR    = radius * 1.25;  // tooth tip
-    const toothHalf = period * 0.18;  // half-angle of tooth base
+    const period = TAU / N;
+    const innerR = radius * 0.72;
+    const tipR   = radius * 1.28;
 
     ctx.beginPath();
     for (let i = 0; i < N; i++) {
       const valleyA = i * period;
-      const toothA  = valleyA + period * 0.5;
+      const cos = Math.cos(valleyA) * innerR;
+      const sin = Math.sin(valleyA) * innerR;
+      if (i === 0) ctx.moveTo(cos, sin);
+      else         ctx.lineTo(cos, sin);
 
-      if (i === 0) ctx.moveTo(Math.cos(valleyA) * innerR, Math.sin(valleyA) * innerR);
-      else          ctx.lineTo(Math.cos(valleyA) * innerR, Math.sin(valleyA) * innerR);
-
-      // Left tooth base → tip → right tooth base
-      ctx.lineTo(Math.cos(toothA - toothHalf) * radius, Math.sin(toothA - toothHalf) * radius);
-      ctx.lineTo(Math.cos(toothA)              * outerR, Math.sin(toothA)              * outerR);
-      ctx.lineTo(Math.cos(toothA + toothHalf) * radius, Math.sin(toothA + toothHalf) * radius);
+      // Curved leading edge → forward-leaning tip (sickle/buzzsaw look)
+      const ctrlA = valleyA + period * 0.15;
+      const tipA  = valleyA + period * 0.62;
+      ctx.quadraticCurveTo(
+        Math.cos(ctrlA) * radius * 1.0, Math.sin(ctrlA) * radius * 1.0,
+        Math.cos(tipA)  * tipR,         Math.sin(tipA)  * tipR,
+      );
+      // Trailing edge is the straight line to the next valley (next iteration),
+      // forming a sharp backward hook.
     }
     ctx.closePath();
   }
@@ -222,6 +400,8 @@ export class Renderer {
 
   _drawStones(stones, camera, myStoneId) {
     const ctx = this.ctx;
+    // Batch every stone inside one save/restore (perf budget)
+    ctx.save();
     for (const stone of stones) {
       if (!stone.alive) continue;
       if (!camera.isVisible(stone.x, stone.y, stone.radius)) continue;
@@ -236,60 +416,52 @@ export class Renderer {
       if (stone.id === myStoneId) {
         const t = (this._time % 1200) / 1200;
         ctx.beginPath();
-        ctx.arc(sx, sy, r + t * 18, 0, Math.PI * 2);
+        ctx.arc(sx, sy, r + t * 18, 0, TAU);
         ctx.strokeStyle = `rgba(255,255,255,${(0.4 * (1 - t)).toFixed(3)})`;
         ctx.lineWidth = 2;
         ctx.stroke();
       }
 
-      // Body
+      // Body + drop shadow (shadow cast beneath, then cleared for detail layers)
+      ctx.shadowColor = 'rgba(0,0,0,0.3)';
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 2;
       ctx.beginPath();
-      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.arc(sx, sy, r, 0, TAU);
       ctx.fillStyle = stone.color;
       ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
 
-      // Glossy highlight — small white circle, top-left, 35% opacity
+      // Glossy marble highlight (white, upper-left, 40% opacity)
       ctx.beginPath();
-      ctx.arc(sx - r * 0.30, sy - r * 0.30, r * 0.45, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.arc(sx - r * 0.25, sy - r * 0.28, r * 0.35, 0, TAU);
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
       ctx.fill();
 
-      // Nickname (skip very small stones)
-      if (r > 12) {
-        const fontSize = Math.max(10, Math.min(14, r * 0.65));
-        ctx.font = `${fontSize}px sans-serif`;
+      // Rim — slightly darker shade of the stone colour
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, TAU);
+      ctx.strokeStyle = this._darken(stone.color, 0.7);
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Nickname — hidden on small stones (world radius < 14)
+      if (stone.radius >= 14) {
+        ctx.font = '11px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.shadowColor = 'rgba(0,0,0,0.75)';
         ctx.shadowBlur = 3;
         ctx.fillStyle = '#ffffff';
         ctx.fillText(stone.nickname, sx, sy);
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
       }
     }
-
-    // Reset shadow state so it doesn't bleed into later draw calls
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Absorption effects
-  // ---------------------------------------------------------------------------
-
-  _drawEffects(camera, timestamp) {
-    const ctx = this.ctx;
-    this._effects = this._effects.filter(e => timestamp - e.startTime < e.duration);
-    for (const e of this._effects) {
-      if (!camera.isVisible(e.x, e.y, 30)) continue;
-      const t = (timestamp - e.startTime) / e.duration;
-      const { sx, sy } = camera.worldToScreen(e.x, e.y);
-      ctx.beginPath();
-      ctx.arc(sx, sy, (4 + t * 22) * camera.zoom, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(255,255,180,${(1 - t).toFixed(3)})`;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
+    ctx.restore();
   }
 
   // ---------------------------------------------------------------------------

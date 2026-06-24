@@ -239,7 +239,7 @@ const server = http.createServer((req, res) => {
             // Anti-camp penalty: penalize staying near the same position 100 frames ago
             if (pos100ago) {
               const dist = Math.hypot(stone.x - pos100ago.x, stone.y - pos100ago.y);
-              reward -= 0.1 * (Math.log(100) - Math.log(dist + 1));
+              reward -= 0.01 * (Math.log(100) - Math.log(dist + 1));
             }
           } else {
             reward = 0.0;

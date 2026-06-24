@@ -1,16 +1,26 @@
 import { GameEngine } from './engine/GameEngine.js';
 import { Renderer } from './Renderer.js';
 import { ConfigPanel } from './ConfigPanel.js';
+import { SoundEngine } from './audio/SoundEngine.js';
+import { startLobbyPreview } from './LobbyPreview.js';
 import { CONFIG } from './config.js';
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('game'));
 const engine = new GameEngine(CONFIG);
 const renderer = new Renderer(canvas, CONFIG);
+const soundEngine = new SoundEngine();
+renderer.setSoundEngine(soundEngine);
 const configPanel = new ConfigPanel(
   CONFIG,
   partial => engine.updateConfig(partial),
   (type, weights) => engine.setBotType(type, weights),
 );
+
+// Death-cause presentation
+const DEATH_CAUSE = {
+  gear: { icon: '⚙', label: 'crushed by a gear' },
+  wall: { icon: '🧱', label: 'pushed off the board' },
+};
 
 function resize() {
   renderer.resize(window.innerWidth, window.innerHeight);
@@ -26,6 +36,19 @@ const playBtn        = document.getElementById('play-btn');
 const deadRadiusEl   = document.getElementById('dead-radius');
 const deadRankEl     = document.getElementById('dead-rank');
 const deadCountdownEl = document.getElementById('dead-countdown');
+const deadIconEl     = document.getElementById('dead-icon');
+const deadCauseEl    = document.getElementById('dead-cause');
+const soundBtn       = document.getElementById('sound-btn');
+
+// Animated orbiting-stones preview behind the lobby card
+const stopLobbyPreview = startLobbyPreview(document.getElementById('lobby-canvas'), CONFIG);
+
+// Speaker toggle (top-right of canvas)
+soundBtn.addEventListener('click', () => {
+  const muted = soundEngine.toggle();
+  soundBtn.textContent = muted ? '🔇' : '🔊';
+  soundBtn.classList.toggle('muted', muted);
+});
 
 const BOT_NAMES = [];
 for(let i=0; i<100; i++) BOT_NAMES.push(i.toString());
@@ -41,11 +64,13 @@ let wasAlive = false;
 let deadAt = 0;
 
 function startGame() {
+  soundEngine.resume(); // unlock Web Audio from this user gesture
   const nickname = nicknameInput.value.trim() || 'You';
   myId = engine.addPlayer('p1', nickname);
   for (const name of BOT_NAMES) engine.addBot(name);
   for (let i=0; i<CONFIG.FRAGMENT_LIFETIME / CONFIG.SPAWN_INTERVAL * (CONFIG.MAX_FRAGMENT_SPAWN + CONFIG.MIN_FRAGMENT_SPAWN) / 2; i++) engine._spawnInitialFragments();
   lobbyOverlay.style.display = 'none';
+  stopLobbyPreview();
   requestAnimationFrame(loop);
 }
 
@@ -86,7 +111,7 @@ window.addEventListener('keydown', e => {
       break;
     case 'z':
     case 'Z':
-      if (myId !== null) engine.boost(myId);
+      if (myId !== null) engine.requestBoost(myId);
       break;
   }
 });
@@ -122,6 +147,10 @@ function loop(ts) {
         // Stone just died — show dead overlay with stats
         wasAlive = false;
         deadAt = ts;
+        const deathEv = gameState.events && gameState.events.find(e => e.type === 'death' && e.stoneId === myId);
+        const cause = DEATH_CAUSE[deathEv?.cause] || DEATH_CAUSE.gear;
+        deadIconEl.textContent = cause.icon;
+        deadCauseEl.textContent = cause.label;
         deadRadiusEl.textContent = peakRadius.toFixed(1);
         deadRankEl.textContent = String(lastRank);
         deadCountdownEl.textContent = '2.0';
