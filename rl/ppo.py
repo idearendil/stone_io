@@ -126,7 +126,9 @@ class RolloutBuffer:
         rewards = np.array(self.rewards, dtype=np.float32)
         dones   = np.array(self.dones,   dtype=np.float32)
 
-        next_val   = float(last_values)
+        # last_values may be a scalar or a size-1 array; NumPy ≥2.0 no longer
+        # auto-converts a (1,) array via float(), so flatten and take element 0.
+        next_val   = float(np.asarray(last_values).reshape(-1)[0])
         advantages = np.zeros(n, dtype=np.float32)
         last_gae   = 0.0
         for t in reversed(range(n)):
