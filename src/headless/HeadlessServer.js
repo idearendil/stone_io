@@ -224,7 +224,7 @@ const server = http.createServer((req, res) => {
           if (died) {
             reward = -1000.0;
           } else if (alive) {
-            reward = Math.sign(currArea - prevArea) * Math.log(Math.abs(currArea - prevArea) + 1) * 0.4;
+            reward = Math.sign(currArea - prevArea) * Math.log(Math.abs(currArea - prevArea) + 1) * 0.5;
 
             // Penalty: direction change proportional to Euclidean distance between actions
             // Compensate for huge velocity
@@ -234,7 +234,7 @@ const server = http.createServer((req, res) => {
             // const velocity = Math.min(1, Math.hypot(curr.dx, curr.dy));
             // reward += ((velocity - 0.8) * 0.0 - dirDist * 0.0);
             const velocity = Math.hypot(stone.vx, stone.vy);
-            reward += Math.log(velocity + 1) * 0.01;
+            reward += Math.log(velocity + 1) * 0.03;
 
             // Anti-camp penalty: penalize staying near the same position 100 frames ago
             if (pos100ago) {

@@ -149,6 +149,12 @@ export class Renderer {
     return `rgb(${Math.round(r * f)},${Math.round(g * f)},${Math.round(b * f)})`;
   }
 
+  _lighten(hex, amt) {
+    const { r, g, b } = this._parseHex(hex);
+    const L = (c) => Math.round(c + (255 - c) * amt);
+    return `rgb(${L(r)},${L(g)},${L(b)})`;
+  }
+
   _hexToRgba(hex, a) {
     const { r, g, b } = this._parseHex(hex);
     return `rgba(${r},${g},${b},${a})`;
@@ -179,6 +185,20 @@ export class Renderer {
       g.fillStyle = style.base;
       g.fillRect(0, 0, texW, texH);
 
+      // Broad "cathedral" figure — a few wide, soft, darker sweeps that give the
+      // wood depth and a sense of solid timber beneath the surface.
+      g.lineWidth = 2.5;
+      const figures = 6;
+      for (let k = 0; k < figures; k++) {
+        const baseY = (k + 0.5) / figures * texH + (Math.random() * 2 - 1) * texH * 0.04;
+        const amp   = texH * (0.02 + Math.random() * 0.03);
+        g.strokeStyle = this._hexToRgba(style.grainColor, (style.grainOpacity * 0.45).toFixed(3));
+        g.beginPath();
+        g.moveTo(0, baseY);
+        g.bezierCurveTo(texW * 0.3, baseY - amp, texW * 0.6, baseY + amp, texW, baseY - amp * 0.4);
+        g.stroke();
+      }
+
       // Wood grain — horizontal bezier curves with two slightly-offset control
       // points for a natural, hand-finished look.
       const spacing = Math.max(2, style.grainSpacing * scale);
@@ -198,6 +218,22 @@ export class Renderer {
         );
         g.stroke();
       }
+
+      // Fine pores — faint speckle that breaks up the flat fill at close zoom.
+      const pores = Math.floor((texW * texH) / 1400);
+      for (let i = 0; i < pores; i++) {
+        g.fillStyle = this._hexToRgba(style.grainColor, (0.06 + Math.random() * 0.1).toFixed(3));
+        g.fillRect(Math.random() * texW, Math.random() * texH, 1, 1);
+      }
+
+      // Lacquer sheen — a soft diagonal light-to-shadow wash for a glossy finish.
+      const sheen = g.createLinearGradient(0, 0, texW, texH);
+      sheen.addColorStop(0,   'rgba(255,240,210,0.06)');
+      sheen.addColorStop(0.5, 'rgba(255,240,210,0)');
+      sheen.addColorStop(1,   'rgba(0,0,0,0.06)');
+      g.fillStyle = sheen;
+      g.fillRect(0, 0, texW, texH);
+
       return c;
     });
     this._zoneTexH = zoneH;
@@ -266,6 +302,18 @@ export class Renderer {
       ctx.stroke();
     }
     ctx.restore();
+
+    // Subtle vignette over the board — darkens the corners for a focused,
+    // premium look (entities are drawn afterwards, so they stay bright).
+    const cx = camera.viewportW / 2, cy = camera.viewportH / 2;
+    const vig = ctx.createRadialGradient(
+      cx, cy, Math.min(camera.viewportW, camera.viewportH) * 0.35,
+      cx, cy, Math.max(camera.viewportW, camera.viewportH) * 0.72,
+    );
+    vig.addColorStop(0, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, 'rgba(0,0,0,0.3)');
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, camera.viewportW, camera.viewportH);
   }
 
   // ---------------------------------------------------------------------------
@@ -422,30 +470,52 @@ export class Renderer {
         ctx.stroke();
       }
 
-      // Body + drop shadow (shadow cast beneath, then cleared for detail layers)
-      ctx.shadowColor = 'rgba(0,0,0,0.3)';
-      ctx.shadowBlur = 6;
+      // --- Premium marble body --------------------------------------------
+      // Soft drop shadow beneath the stone (scales with size)
+      ctx.shadowColor = 'rgba(0,0,0,0.35)';
+      ctx.shadowBlur = Math.max(4, r * 0.25);
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 2;
+      ctx.shadowOffsetY = Math.max(2, r * 0.12);
+
+      // Spherical shading: lit from upper-left, falling to a dark lower-right rim
+      const lx = sx - r * 0.32, ly = sy - r * 0.36;
+      const body = ctx.createRadialGradient(lx, ly, r * 0.1, sx, sy, r * 1.08);
+      body.addColorStop(0,   this._lighten(stone.color, 0.5));
+      body.addColorStop(0.5, stone.color);
+      body.addColorStop(1,   this._darken(stone.color, 0.5));
       ctx.beginPath();
       ctx.arc(sx, sy, r, 0, TAU);
-      ctx.fillStyle = stone.color;
+      ctx.fillStyle = body;
       ctx.fill();
+
       ctx.shadowColor = 'transparent';
       ctx.shadowBlur = 0;
       ctx.shadowOffsetY = 0;
 
-      // Glossy marble highlight (white, upper-left, 40% opacity)
-      ctx.beginPath();
-      ctx.arc(sx - r * 0.25, sy - r * 0.28, r * 0.35, 0, TAU);
-      ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.fill();
-
-      // Rim — slightly darker shade of the stone colour
+      // Broad glossy sheen (soft, fading toward the centre)
+      const gloss = ctx.createRadialGradient(
+        sx - r * 0.25, sy - r * 0.3, 0,
+        sx - r * 0.25, sy - r * 0.3, r * 0.95,
+      );
+      gloss.addColorStop(0,   'rgba(255,255,255,0.45)');
+      gloss.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+      gloss.addColorStop(1,   'rgba(255,255,255,0)');
       ctx.beginPath();
       ctx.arc(sx, sy, r, 0, TAU);
-      ctx.strokeStyle = this._darken(stone.color, 0.7);
-      ctx.lineWidth = 1.5;
+      ctx.fillStyle = gloss;
+      ctx.fill();
+
+      // Tight specular glint
+      ctx.beginPath();
+      ctx.arc(sx - r * 0.34, sy - r * 0.38, Math.max(1, r * 0.12), 0, TAU);
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fill();
+
+      // Polished rim — dark edge just inside the silhouette for definition
+      ctx.beginPath();
+      ctx.arc(sx, sy, r - Math.max(0.5, r * 0.03), 0, TAU);
+      ctx.strokeStyle = this._darken(stone.color, 0.45);
+      ctx.lineWidth = Math.max(1, r * 0.06);
       ctx.stroke();
 
       // Nickname — hidden on small stones (world radius < 14)
